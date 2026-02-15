@@ -12,6 +12,7 @@ export interface TaskResponse {
   status: string
   progress: { translated: number; total: number }
   creation: TaskCreationInfo | null
+  prompt: { id: number; name: string } | null
   createdAt: string
   updatedAt: string
 }
@@ -26,9 +27,24 @@ export interface DownloadResponse {
   fileName: string
 }
 
-export interface PromptResponse {
+export interface PromptItem {
+  id: number
+  name: string
   content: string
-  isCustom: boolean
+  usageCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TaskBriefInfo {
+  taskId: string
+  fileName: string
+  status: string
+  createdAt: string
+}
+
+export interface PromptDetail extends PromptItem {
+  tasks: TaskBriefInfo[]
 }
 
 export interface DictionaryEntry {

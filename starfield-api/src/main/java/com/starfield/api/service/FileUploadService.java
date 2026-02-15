@@ -2,13 +2,11 @@ package com.starfield.api.service;
 
 import com.starfield.api.client.EngineClient;
 import com.starfield.api.dto.FileUploadResponse;
+import com.starfield.api.dto.PromptRequest;
 import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
-import com.starfield.api.repository.CustomPromptRepository;
 import com.starfield.api.repository.DictionaryEntryRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.starfield.api.entity.CustomPrompt;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,7 +31,7 @@ import java.util.UUID;
 public class FileUploadService {
 
     final TranslationTaskRepository translationTaskRepository;
-    final CustomPromptRepository customPromptRepository;
+    final PromptService promptService;
     final DictionaryEntryRepository dictionaryEntryRepository;
     final EngineClient engineClient;
 
@@ -44,31 +42,69 @@ public class FileUploadService {
     private static final byte[] ESM_MAGIC_BYTES = "TES4".getBytes();
 
     /**
-     * 处理文件上传：校验格式、存储文件、创建任务、提交翻译引擎
+     * 处理文件上传：校验格式、存储文件、解析 Prompt、创建任务、提交翻译引擎
      *
      * @param file              上传的文件
      * @param creationVersionId 关联的 creation 版本 ID（可选）
+     * @param promptId          选择已有 Prompt 的 ID（可选）
+     * @param newPromptName     现场编写的 Prompt 名称（可选）
+     * @param newPromptContent  现场编写的 Prompt 内容（可选）
      * @return 上传响应（taskId + fileName）
      * @throws IOException 文件存储异常
      */
-    public FileUploadResponse upload(MultipartFile file, Long creationVersionId) throws IOException {
+    public FileUploadResponse upload(MultipartFile file, Long creationVersionId,
+                                     Long promptId, String newPromptName,
+                                     String newPromptContent) throws IOException {
         var fileName = file.getOriginalFilename();
         log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {}", fileName, creationVersionId);
 
         validateEsmFormat(file);
+
+        var resolvedPrompt = resolvePrompt(promptId, newPromptName, newPromptContent);
 
         var taskId = UUID.randomUUID().toString();
         var storedPath = storeFile(file, taskId);
 
         var task = createTask(taskId, fileName, storedPath);
         task.setCreationVersionId(creationVersionId);
+        task.setPromptId(resolvedPrompt.id());
         translationTaskRepository.insert(task);
-        log.info("[upload] 任务创建成功 taskId {}", taskId);
+        log.info("[upload] 任务创建成功 taskId {} promptId {}", taskId, resolvedPrompt.id());
 
-        submitToEngine(task);
+        submitToEngine(task, resolvedPrompt.content());
 
         return new FileUploadResponse(taskId, fileName);
     }
+
+    /**
+     * 解析 Prompt：现场编写优先 → 选择已有 → 默认
+     *
+     * @param promptId        选择已有 Prompt 的 ID（可选）
+     * @param newPromptName   现场编写的 Prompt 名称（可选）
+     * @param newPromptContent 现场编写的 Prompt 内容（可选）
+     * @return 解析后的 Prompt（ID 和内容）
+     */
+    ResolvedPrompt resolvePrompt(Long promptId, String newPromptName, String newPromptContent) {
+        if (Objects.nonNull(newPromptContent) && !newPromptContent.isBlank()) {
+            log.info("[resolvePrompt] 现场编写 Prompt name {}", newPromptName);
+            var created = promptService.createPrompt(new PromptRequest(newPromptName, newPromptContent));
+            return new ResolvedPrompt(created.id(), newPromptContent);
+        }
+
+        if (Objects.nonNull(promptId)) {
+            log.info("[resolvePrompt] 选择已有 Prompt promptId {}", promptId);
+            var content = promptService.getPromptContent(promptId);
+            return new ResolvedPrompt(promptId, content);
+        }
+
+        log.info("[resolvePrompt] 使用默认 Prompt");
+        return new ResolvedPrompt(null, PromptService.DEFAULT_PROMPT);
+    }
+
+    /**
+     * 解析后的 Prompt 信息
+     */
+    record ResolvedPrompt(Long id, String content) {}
 
     /**
      * 校验文件是否为有效的 ESM 格式（扩展名 + 魔数字节）
@@ -137,15 +173,11 @@ public class FileUploadService {
     /**
      * 向翻译引擎提交翻译任务，传递 customPrompt 和 dictionaryEntries
      *
-     * @param task 翻译任务
+     * @param task         翻译任务
+     * @param customPrompt 解析后的 Prompt 内容
      */
-    void submitToEngine(TranslationTask task) {
+    void submitToEngine(TranslationTask task, String customPrompt) {
         try {
-            var promptWrapper = new LambdaQueryWrapper<CustomPrompt>()
-                    .eq(CustomPrompt::getIsActive, true);
-            var activePrompt = customPromptRepository.selectOne(promptWrapper);
-            var customPrompt = Objects.nonNull(activePrompt) ? activePrompt.getContent() : null;
-
             var dictionaryEntries = dictionaryEntryRepository.selectList(null).stream()
                     .map(entry -> new EngineClient.DictionaryEntryDto(
                             entry.getSourceText(),

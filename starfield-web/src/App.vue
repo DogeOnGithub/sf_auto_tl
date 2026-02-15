@@ -4,7 +4,7 @@ import { Reading, Setting, Collection, Clock, Folder } from '@element-plus/icons
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
-import PromptEditor from '@/components/PromptEditor.vue'
+import PromptManager from '@/components/PromptManager.vue'
 import DictionaryManager from '@/components/DictionaryManager.vue'
 import CreationManager from '@/components/CreationManager.vue'
 import type { FileUploadResponse } from '@/types'
@@ -44,7 +44,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         </el-menu-item>
         <el-menu-item index="prompt">
           <el-icon><Setting /></el-icon>
-          <span>Prompt 设置</span>
+          <span>Prompt 管理</span>
         </el-menu-item>
         <el-menu-item index="dictionary">
           <el-icon><Collection /></el-icon>
@@ -71,8 +71,8 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         </div>
 
         <div v-show="activeMenu === 'prompt'" class="page-content">
-          <h2 class="page-title">Prompt 设置</h2>
-          <PromptEditor />
+          <h2 class="page-title">Prompt 管理</h2>
+          <PromptManager />
         </div>
 
         <div v-show="activeMenu === 'dictionary'" class="page-content">

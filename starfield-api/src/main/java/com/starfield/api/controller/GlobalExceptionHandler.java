@@ -84,13 +84,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 处理 Prompt 内容过长异常
+     * 处理 Prompt 模板不存在异常
      */
-    @ExceptionHandler(PromptService.PromptTooLongException.class)
-    public ResponseEntity<ErrorResponse> handlePromptTooLong(PromptService.PromptTooLongException e) {
-        log.warn("[handlePromptTooLong] {}", e.getMessage());
+    @ExceptionHandler(PromptService.PromptNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handlePromptNotFound(PromptService.PromptNotFoundException e) {
+        log.warn("[handlePromptNotFound] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("PROMPT_NOT_FOUND", e.getMessage()));
+    }
+
+    /**
+     * 处理 Prompt 校验异常
+     */
+    @ExceptionHandler(PromptService.PromptValidationException.class)
+    public ResponseEntity<ErrorResponse> handlePromptValidation(PromptService.PromptValidationException e) {
+        log.warn("[handlePromptValidation] {}", e.getMessage());
         return ResponseEntity.badRequest()
-                .body(new ErrorResponse("PROMPT_TOO_LONG", "Prompt 内容超过最大长度限制"));
+                .body(new ErrorResponse("PROMPT_VALIDATION_ERROR", e.getMessage()));
     }
 
     /**

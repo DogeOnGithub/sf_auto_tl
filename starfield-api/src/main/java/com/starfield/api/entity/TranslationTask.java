@@ -52,6 +52,9 @@ public class TranslationTask {
     @TableField("creation_version_id")
     private Long creationVersionId;
 
+    @TableField("prompt_id")
+    private Long promptId;
+
     @TableField("sync_fail_count")
     private Integer syncFailCount = 0;
 

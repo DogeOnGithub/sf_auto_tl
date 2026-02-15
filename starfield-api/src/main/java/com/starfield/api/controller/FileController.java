@@ -29,15 +29,21 @@ public class FileController {
      *
      * @param file              上传的 ESM 文件
      * @param creationVersionId 关联的 creation 版本 ID（可选）
+     * @param promptId          选择已有 Prompt 的 ID（可选）
+     * @param newPromptName     现场编写的 Prompt 名称（可选）
+     * @param newPromptContent  现场编写的 Prompt 内容（可选）
      * @return 任务 ID 和文件名
      * @throws IOException 文件处理异常
      */
     @PostMapping("/upload")
     public ResponseEntity<FileUploadResponse> upload(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "creationVersionId", required = false) Long creationVersionId) throws IOException {
-        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {}", file.getOriginalFilename(), creationVersionId);
-        var response = fileUploadService.upload(file, creationVersionId);
+            @RequestParam(value = "creationVersionId", required = false) Long creationVersionId,
+            @RequestParam(value = "promptId", required = false) Long promptId,
+            @RequestParam(value = "newPromptName", required = false) String newPromptName,
+            @RequestParam(value = "newPromptContent", required = false) String newPromptContent) throws IOException {
+        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {}", file.getOriginalFilename(), creationVersionId, promptId);
+        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent);
         return ResponseEntity.ok(response);
     }
 }

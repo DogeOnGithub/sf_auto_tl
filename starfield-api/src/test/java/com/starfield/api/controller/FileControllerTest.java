@@ -31,7 +31,7 @@ class FileControllerTest {
     @Test
     void upload_validFile_returns200WithTaskId() throws Exception {
         var response = new FileUploadResponse("task-123", "test.esm");
-        when(fileUploadService.upload(any(), isNull())).thenReturn(response);
+        when(fileUploadService.upload(any(), isNull(), isNull(), isNull(), isNull())).thenReturn(response);
 
         var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", "TES4data".getBytes());
 
@@ -46,7 +46,7 @@ class FileControllerTest {
      */
     @Test
     void upload_invalidFormat_returns400() throws Exception {
-        when(fileUploadService.upload(any(), isNull())).thenThrow(new FileUploadService.InvalidEsmFormatException());
+        when(fileUploadService.upload(any(), isNull(), isNull(), isNull(), isNull())).thenThrow(new FileUploadService.InvalidEsmFormatException());
 
         var file = new MockMultipartFile("file", "test.txt", "text/plain", "hello".getBytes());
 

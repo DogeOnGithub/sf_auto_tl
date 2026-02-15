@@ -4,7 +4,8 @@ import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { uploadFile } from '@/services/fileApi'
 import { getCreations } from '@/services/creationApi'
-import type { FileUploadResponse, Creation } from '@/types'
+import { listPrompts } from '@/services/promptApi'
+import type { FileUploadResponse, Creation, PromptItem } from '@/types'
 import type { UploadRequestOptions } from 'element-plus'
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
@@ -22,6 +23,14 @@ const creationList = ref<Creation[]>([])
 const selectedCreationId = ref<number | null>(null)
 const selectedVersionId = ref<number | null>(null)
 const loadingCreations = ref(false)
+
+/** Prompt 选择 */
+const promptMode = ref<'default' | 'select' | 'new'>('default')
+const promptList = ref<PromptItem[]>([])
+const selectedPromptId = ref<number | null>(null)
+const newPromptName = ref('')
+const newPromptContent = ref('')
+const loadingPrompts = ref(false)
 
 /** 当前选中 creation 的版本列表 */
 const versionOptions = computed(() => {
@@ -54,6 +63,27 @@ function handleCreationChange() {
   selectedVersionId.value = null
 }
 
+/** 切换 Prompt 模式时加载 Prompt 列表 */
+async function handlePromptModeChange(val: string) {
+  if (val === 'select' && promptList.value.length === 0) {
+    loadingPrompts.value = true
+    try {
+      promptList.value = await listPrompts()
+    } catch {
+      ElMessage.error('加载 Prompt 列表失败')
+    } finally {
+      loadingPrompts.value = false
+    }
+  }
+  if (val !== 'select') {
+    selectedPromptId.value = null
+  }
+  if (val !== 'new') {
+    newPromptName.value = ''
+    newPromptContent.value = ''
+  }
+}
+
 /** 上传前校验 */
 function beforeUpload(file: File): boolean {
   if (!file.name.toLowerCase().endsWith('.esm')) {
@@ -68,6 +98,20 @@ function beforeUpload(file: File): boolean {
     ElMessage.warning('请先选择要关联的作品版本')
     return false
   }
+  if (promptMode.value === 'select' && !selectedPromptId.value) {
+    ElMessage.warning('请选择一个 Prompt 模板')
+    return false
+  }
+  if (promptMode.value === 'new') {
+    if (!newPromptName.value.trim()) {
+      ElMessage.warning('请输入新 Prompt 名称')
+      return false
+    }
+    if (!newPromptContent.value.trim()) {
+      ElMessage.warning('请输入新 Prompt 内容')
+      return false
+    }
+  }
   return true
 }
 
@@ -77,9 +121,18 @@ async function handleUpload(options: UploadRequestOptions) {
   uploadPercent.value = 0
   try {
     var versionId = linkMode.value ? (selectedVersionId.value ?? undefined) : undefined
-    var result = await uploadFile(options.file, (percent) => {
-      uploadPercent.value = percent
-    }, versionId)
+    var pId = promptMode.value === 'select' ? (selectedPromptId.value ?? undefined) : undefined
+    var pName = promptMode.value === 'new' ? newPromptName.value.trim() : undefined
+    var pContent = promptMode.value === 'new' ? newPromptContent.value.trim() : undefined
+
+    var result = await uploadFile(
+      options.file,
+      (percent) => { uploadPercent.value = percent },
+      versionId,
+      pId,
+      pName || undefined,
+      pContent || undefined,
+    )
     ElMessage.success(`文件 ${result.fileName} 上传成功`)
     emit('upload-success', result)
   } catch (err: any) {
@@ -129,6 +182,37 @@ async function handleUpload(options: UploadRequestOptions) {
       </el-select>
     </div>
 
+    <div class="prompt-section">
+      <div class="prompt-label">Prompt 设置</div>
+      <el-radio-group v-model="promptMode" @change="handlePromptModeChange">
+        <el-radio value="default">默认 Prompt</el-radio>
+        <el-radio value="select">选择已有</el-radio>
+        <el-radio value="new">新建 Prompt</el-radio>
+      </el-radio-group>
+
+      <div v-if="promptMode === 'select'" class="prompt-select">
+        <el-select
+          v-model="selectedPromptId"
+          placeholder="选择 Prompt 模板"
+          filterable
+          :loading="loadingPrompts"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="p in promptList"
+            :key="p.id"
+            :label="p.name"
+            :value="p.id"
+          />
+        </el-select>
+      </div>
+
+      <div v-if="promptMode === 'new'" class="prompt-new">
+        <el-input v-model="newPromptName" placeholder="Prompt 名称" style="margin-bottom: 8px" />
+        <el-input v-model="newPromptContent" type="textarea" :rows="4" placeholder="Prompt 内容" />
+      </div>
+    </div>
+
     <el-upload
       drag
       accept=".esm"
@@ -165,6 +249,27 @@ async function handleUpload(options: UploadRequestOptions) {
   display: flex;
   justify-content: center;
   margin-bottom: 12px;
+}
+
+.prompt-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+}
+
+.prompt-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 8px;
+}
+
+.prompt-select {
+  margin-top: 10px;
+}
+
+.prompt-new {
+  margin-top: 10px;
 }
 
 .upload-placeholder {

@@ -11,6 +11,7 @@ public record TaskResponse(
         String status,
         Progress progress,
         CreationInfo creation,
+        PromptInfo prompt,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
@@ -29,4 +30,9 @@ public record TaskResponse(
             Long versionId,
             String version
     ) {}
+
+    /**
+     * 关联的 Prompt 信息
+     */
+    public record PromptInfo(Long id, String name) {}
 }

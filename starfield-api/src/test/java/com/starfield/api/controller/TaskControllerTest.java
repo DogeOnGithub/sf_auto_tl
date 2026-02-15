@@ -31,7 +31,7 @@ class TaskControllerTest {
     void getTask_existingTask_returns200WithTaskInfo() throws Exception {
         var now = LocalDateTime.of(2024, 1, 15, 10, 30, 0);
         var response = new TaskResponse("task-123", "test.esm", "translating",
-                new TaskResponse.Progress(5, 10), null, now, now);
+                new TaskResponse.Progress(5, 10), null, null, now, now);
         when(taskService.getTask("task-123")).thenReturn(response);
 
         mockMvc.perform(get("/api/tasks/task-123"))

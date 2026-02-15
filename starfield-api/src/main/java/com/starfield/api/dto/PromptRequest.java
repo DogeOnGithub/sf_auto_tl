@@ -1,8 +1,9 @@
 package com.starfield.api.dto;
 
 /**
- * Prompt 保存请求 DTO
+ * Prompt 模板创建/更新请求 DTO
  */
 public record PromptRequest(
+        String name,
         String content
 ) {}

@@ -9,6 +9,7 @@ import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.CustomPromptRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,7 @@ public class TaskService {
     final TranslationTaskRepository translationTaskRepository;
     final CreationVersionRepository creationVersionRepository;
     final CreationRepository creationRepository;
+    final CustomPromptRepository customPromptRepository;
     final EngineClient engineClient;
     final CosService cosService;
 
@@ -103,10 +105,20 @@ public class TaskService {
     /**
      * 转换任务实体为响应 DTO（含 creation 信息）
      */
+    /**
+     * 将 TranslationTask 实体转换为 TaskResponse DTO
+     */
     private TaskResponse toResponse(TranslationTask task) {
         TaskResponse.CreationInfo creationInfo = null;
         if (Objects.nonNull(task.getCreationVersionId())) {
             creationInfo = buildCreationInfo(task.getCreationVersionId());
+        }
+        TaskResponse.PromptInfo promptInfo = null;
+        if (Objects.nonNull(task.getPromptId())) {
+            var prompt = customPromptRepository.selectById(task.getPromptId());
+            if (Objects.nonNull(prompt)) {
+                promptInfo = new TaskResponse.PromptInfo(prompt.getId(), prompt.getName());
+            }
         }
         return new TaskResponse(
                 task.getTaskId(),
@@ -114,6 +126,7 @@ public class TaskService {
                 task.getStatus().name(),
                 new TaskResponse.Progress(task.getTranslatedCount(), task.getTotalCount()),
                 creationInfo,
+                promptInfo,
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );

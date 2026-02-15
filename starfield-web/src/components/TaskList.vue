@@ -84,6 +84,7 @@ function addTask(taskId: string) {
     status: 'waiting',
     progress: { translated: 0, total: 0 },
     creation: null,
+    prompt: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }

@@ -5,6 +5,7 @@ import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.CustomPromptRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +36,9 @@ class TaskServiceTest {
 
     @Mock
     CreationRepository creationRepository;
+
+    @Mock
+    CustomPromptRepository customPromptRepository;
 
     @Mock
     EngineClient engineClient;

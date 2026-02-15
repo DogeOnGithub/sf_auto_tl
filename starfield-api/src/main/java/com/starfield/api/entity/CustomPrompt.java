@@ -19,11 +19,15 @@ public class CustomPrompt {
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
+    @TableField("name")
+    private String name;
+
     @TableField("content")
     private String content;
 
-    @TableField("is_active")
-    private Boolean isActive = true;
+    @TableField("deleted")
+    @TableLogic
+    private Boolean deleted = false;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
