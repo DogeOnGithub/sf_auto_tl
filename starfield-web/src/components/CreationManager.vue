@@ -350,6 +350,11 @@ function isValidUrl(url: string | null | undefined): boolean {
   return url.startsWith('http://') || url.startsWith('https://')
 }
 
+/** 在新窗口打开外部链接 */
+function openExternal(url: string) {
+  window.open(url)
+}
+
 /** 上传/替换 Mod 文件 */
 async function handleUploadFile(versionId: number, uploadFileObj: any) {
   try {
@@ -504,8 +509,8 @@ onMounted(() => {
             <el-descriptions-item label="作者">{{ selectedCreation.author || '-' }}</el-descriptions-item>
             <el-descriptions-item label="链接">
               <div style="display: flex; gap: 8px;">
-                <el-button v-if="isValidUrl(selectedCreation.ccLink)" text type="primary" size="small" :icon="Link" @click.stop="window.open(selectedCreation.ccLink)">CC 链接</el-button>
-                <el-button v-if="isValidUrl(selectedCreation.nexusLink)" text type="primary" size="small" :icon="Link" @click.stop="window.open(selectedCreation.nexusLink)">N 网链接</el-button>
+                <el-button v-if="isValidUrl(selectedCreation.ccLink)" text type="primary" size="small" :icon="Link" @click.stop="openExternal(selectedCreation.ccLink)">CC 链接</el-button>
+                <el-button v-if="isValidUrl(selectedCreation.nexusLink)" text type="primary" size="small" :icon="Link" @click.stop="openExternal(selectedCreation.nexusLink)">N 网链接</el-button>
                 <span v-if="!isValidUrl(selectedCreation.ccLink) && !isValidUrl(selectedCreation.nexusLink)">-</span>
               </div>
             </el-descriptions-item>
@@ -527,7 +532,7 @@ onMounted(() => {
                   <el-tooltip v-if="row.fileName" :content="row.fileName" placement="top" :show-after="300">
                     <span class="patch-filename">{{ row.fileName }}</span>
                   </el-tooltip>
-                  <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="window.open(row.filePath)">下载</el-button>
+                  <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="openExternal(row.filePath)">下载</el-button>
                   <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
                     <el-button text type="success" size="small" :icon="Upload">{{ row.filePath ? '替换' : '上传' }}</el-button>
                   </el-upload>
