@@ -8,6 +8,7 @@ import com.starfield.api.entity.CreationVersion;
 import com.starfield.api.repository.CreationImageRepository;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.TranslationTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +39,9 @@ class CreationServiceTest {
 
     @Mock
     CosService cosService;
+
+    @Mock
+    TranslationTaskRepository translationTaskRepository;
 
     @InjectMocks
     CreationService creationService;

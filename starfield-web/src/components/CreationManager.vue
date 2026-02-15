@@ -388,6 +388,7 @@ onMounted(() => {
         <div class="card-cover">
           <el-image v-if="item.images && item.images.length > 0" :src="item.images[0].url" fit="cover" class="card-image" />
           <div v-else class="card-placeholder">暂无图片</div>
+          <span v-if="item.hasChinesePatch" class="chinese-patch-badge">中文补丁</span>
         </div>
         <div class="card-body">
           <div class="card-title">{{ item.name }}</div>
@@ -643,9 +644,11 @@ onMounted(() => {
 .creation-card { cursor: pointer; transition: transform 0.2s; }
 .creation-card:hover { transform: translateY(-2px); }
 .creation-card :deep(.el-card__body) { padding: 0; }
-.card-cover { height: 140px; overflow: hidden; background: var(--el-fill-color-lighter); }
+.card-cover { height: 140px; overflow: hidden; background: var(--el-fill-color-lighter); position: relative; }
 .card-image { width: 100%; height: 140px; display: block; }
 .card-placeholder { height: 140px; display: flex; align-items: center; justify-content: center; color: var(--el-text-color-placeholder); font-size: 13px; }
+.card-body { padding: 12px; }
+.chinese-patch-badge { position: absolute; top: 8px; right: 8px; background: linear-gradient(135deg, #e74c3c, #c0392b); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
 .card-body { padding: 12px; }
 .card-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-subtitle { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

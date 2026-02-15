@@ -17,6 +17,7 @@ public record CreationResponse(
         List<String> tags,
         List<VersionInfo> versions,
         List<ImageInfo> images,
+        boolean hasChinesePatch,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

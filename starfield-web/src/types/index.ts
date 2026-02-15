@@ -74,6 +74,7 @@ export interface Creation {
   tags: string[]
   versions: CreationVersion[]
   images: CreationImage[]
+  hasChinesePatch: boolean
   createdAt: string
   updatedAt: string
 }

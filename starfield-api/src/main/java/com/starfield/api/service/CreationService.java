@@ -11,6 +11,9 @@ import com.starfield.api.entity.CreationVersion;
 import com.starfield.api.repository.CreationImageRepository;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.TranslationTaskRepository;
+import com.starfield.api.entity.TaskStatus;
+import com.starfield.api.entity.TranslationTask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,7 @@ public class CreationService {
     final CreationRepository creationRepository;
     final CreationVersionRepository creationVersionRepository;
     final CreationImageRepository creationImageRepository;
+    final TranslationTaskRepository translationTaskRepository;
     final CosService cosService;
 
     /**
@@ -334,15 +338,37 @@ public class CreationService {
     /**
      * 转换实体为响应 DTO
      */
+    /** 转换为响应 DTO */
     private CreationResponse toResponse(Creation c, List<CreationResponse.VersionInfo> versions, List<CreationResponse.ImageInfo> images) {
         var tags = Objects.nonNull(c.getTags()) && !c.getTags().isBlank()
                 ? Arrays.asList(c.getTags().split(","))
                 : List.<String>of();
+        var hasChinesePatch = checkHasChinesePatch(c.getId(), versions);
         return new CreationResponse(
                 c.getId(), c.getName(), c.getTranslatedName(), c.getAuthor(),
                 c.getCcLink(), c.getNexusLink(), c.getRemark(), tags,
-                versions, images, c.getCreatedAt(), c.getUpdatedAt()
+                versions, images, hasChinesePatch, c.getCreatedAt(), c.getUpdatedAt()
         );
+    }
+
+    /** 判断是否有简体中文补丁（任意版本有 patchFilePath 或有已完成的翻译任务） */
+    private boolean checkHasChinesePatch(Long creationId, List<CreationResponse.VersionInfo> versions) {
+        var hasPatch = versions.stream()
+                .anyMatch(v -> Objects.nonNull(v.patchFilePath()) && !v.patchFilePath().isBlank());
+        if (hasPatch) {
+            return true;
+        }
+        var versionIds = versions.stream()
+                .map(CreationResponse.VersionInfo::id)
+                .collect(Collectors.toList());
+        if (versionIds.isEmpty()) {
+            return false;
+        }
+        var taskWrapper = new QueryWrapper<TranslationTask>()
+                .in("creation_version_id", versionIds)
+                .eq("status", TaskStatus.completed.name())
+                .last("LIMIT 1");
+        return translationTaskRepository.selectCount(taskWrapper) > 0;
     }
 
     /**
