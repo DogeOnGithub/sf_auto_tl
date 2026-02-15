@@ -28,6 +28,7 @@ starfield-engine/.pytest_cache/
 # Node
 starfield-web/node_modules/
 starfield-web/dist/
+starfield-web/tsconfig.tsbuildinfo
 
 # Uploads
 uploads/
