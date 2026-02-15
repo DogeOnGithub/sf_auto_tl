@@ -376,7 +376,7 @@ async function editShareLink(versionId: number, currentLink: string) {
       inputPlaceholder: 'https://...',
       confirmButtonText: '保存',
       cancelButtonText: '取消',
-    })
+    }) as { value: string }
     var result = await updateVersionShareLink(versionId, (value || '').trim())
     ElMessage.success('分享链接已更新')
     if (selectedCreation.value) {
