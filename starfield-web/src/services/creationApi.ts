@@ -40,21 +40,36 @@ export function getCreationTasks(creationId: number): Promise<TaskResponse[]> {
   return api.get<TaskResponse[]>(`/api/creations/${creationId}/tasks`).then((res) => res.data)
 }
 
+/** 更新版本分享链接 */
+export function updateVersionShareLink(versionId: number, fileShareLink: string): Promise<Creation> {
+  return api.put<Creation>(`/api/creations/versions/${versionId}/share-link`, { fileShareLink }).then((res) => res.data)
+}
+
 /** 上传汉化补丁文件 */
-export function uploadPatch(versionId: number, file: File): Promise<Creation> {
+export function uploadPatch(versionId: number, file: File, onProgress?: (percent: number) => void): Promise<Creation> {
   var fd = new FormData()
   fd.append('file', file)
   return api.post<Creation>(`/api/creations/versions/${versionId}/patch`, fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total))
+      }
+    },
   }).then((res) => res.data)
 }
 
 /** 上传/替换 Mod 文件 */
-export function uploadFile(versionId: number, file: File): Promise<Creation> {
+export function uploadFile(versionId: number, file: File, onProgress?: (percent: number) => void): Promise<Creation> {
   var fd = new FormData()
   fd.append('file', file)
   return api.post<Creation>(`/api/creations/versions/${versionId}/file`, fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total))
+      }
+    },
   }).then((res) => res.data)
 }
 

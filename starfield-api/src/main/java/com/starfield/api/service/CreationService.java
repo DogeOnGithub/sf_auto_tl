@@ -253,6 +253,24 @@ public class CreationService {
     }
 
     /**
+     * 更新版本分享链接
+     *
+     * @param versionId     版本 ID
+     * @param fileShareLink 分享链接
+     * @return 作品响应
+     */
+    public CreationResponse updateVersionShareLink(Long versionId, String fileShareLink) {
+        log.info("[updateVersionShareLink] 更新分享链接 versionId {} fileShareLink {}", versionId, fileShareLink);
+        var version = creationVersionRepository.selectById(versionId);
+        if (Objects.isNull(version)) {
+            throw new RuntimeException("版本不存在 versionId " + versionId);
+        }
+        version.setFileShareLink(fileShareLink);
+        creationVersionRepository.updateById(version);
+        return getById(version.getCreationId());
+    }
+
+    /**
      * 删除指定版本
      *
      * @param versionId 版本 ID

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
 import type { Creation, TaskResponse } from '@/types'
 
@@ -49,6 +49,11 @@ const showDrawer = ref(false)
 const selectedCreation = ref<Creation | null>(null)
 const creationTasks = ref<TaskResponse[]>([])
 const loadingTasks = ref(false)
+
+/** 上传进度 */
+const uploadingVersionId = ref<number | null>(null)
+const uploadProgress = ref(0)
+const uploadType = ref<'file' | 'patch' | null>(null)
 
 /** 添加版本对话框 */
 const showAddVersionDialog = ref(false)
@@ -327,8 +332,11 @@ async function handleAddVersionSubmit() {
 
 /** 上传汉化补丁 */
 async function handleUploadPatch(versionId: number, uploadFile: any) {
+  uploadingVersionId.value = versionId
+  uploadType.value = 'patch'
+  uploadProgress.value = 0
   try {
-    var result = await uploadPatch(versionId, uploadFile.raw)
+    var result = await uploadPatch(versionId, uploadFile.raw, (percent) => { uploadProgress.value = percent })
     ElMessage.success('补丁上传成功')
     if (selectedCreation.value) {
       selectedCreation.value = result as any
@@ -336,6 +344,10 @@ async function handleUploadPatch(versionId: number, uploadFile: any) {
     loadCreations()
   } catch {
     ElMessage.error('补丁上传失败')
+  } finally {
+    uploadingVersionId.value = null
+    uploadType.value = null
+    uploadProgress.value = 0
   }
 }
 
@@ -350,6 +362,34 @@ function isValidUrl(url: string | null | undefined): boolean {
   return url.startsWith('http://') || url.startsWith('https://')
 }
 
+/** 判断 creation 是否缺少源文件（所有版本都没有 mod 文件且没有有效分享链接） */
+function hasNoSourceFile(creation: Creation): boolean {
+  if (!creation.versions || creation.versions.length === 0) return true
+  return creation.versions.every(v => !v.filePath && !isValidUrl(v.fileShareLink))
+}
+
+/** 编辑分享链接（弹框） */
+async function editShareLink(versionId: number, currentLink: string) {
+  try {
+    var { value } = await ElMessageBox.prompt('请输入分享链接', '编辑分享链接', {
+      inputValue: currentLink || '',
+      inputPlaceholder: 'https://...',
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    var result = await updateVersionShareLink(versionId, (value || '').trim())
+    ElMessage.success('分享链接已更新')
+    if (selectedCreation.value) {
+      selectedCreation.value = result as any
+    }
+    loadCreations()
+  } catch (e: any) {
+    if (e !== 'cancel' && e?.toString() !== 'cancel') {
+      ElMessage.error('更新分享链接失败')
+    }
+  }
+}
+
 /** 在新窗口打开外部链接 */
 function openExternal(url: string) {
   window.open(url)
@@ -357,8 +397,11 @@ function openExternal(url: string) {
 
 /** 上传/替换 Mod 文件 */
 async function handleUploadFile(versionId: number, uploadFileObj: any) {
+  uploadingVersionId.value = versionId
+  uploadType.value = 'file'
+  uploadProgress.value = 0
   try {
-    var result = await uploadFile(versionId, uploadFileObj.raw)
+    var result = await uploadFile(versionId, uploadFileObj.raw, (percent) => { uploadProgress.value = percent })
     ElMessage.success('文件上传成功')
     if (selectedCreation.value) {
       selectedCreation.value = result as any
@@ -366,6 +409,10 @@ async function handleUploadFile(versionId: number, uploadFileObj: any) {
     loadCreations()
   } catch {
     ElMessage.error('文件上传失败')
+  } finally {
+    uploadingVersionId.value = null
+    uploadType.value = null
+    uploadProgress.value = 0
   }
 }
 
@@ -389,6 +436,7 @@ onMounted(() => {
           <el-image v-if="item.images && item.images.length > 0" :src="item.images[0].url" fit="cover" class="card-image" />
           <div v-else class="card-placeholder">暂无图片</div>
           <span v-if="item.hasChinesePatch" class="chinese-patch-badge">中文补丁</span>
+          <span v-if="hasNoSourceFile(item)" class="no-source-badge">无源文件</span>
         </div>
         <div class="card-body">
           <div class="card-title">{{ item.name }}</div>
@@ -529,34 +577,43 @@ onMounted(() => {
             <el-table-column prop="version" label="版本" width="80" />
             <el-table-column label="Mod 文件" min-width="180">
               <template #default="{ row }">
-                <div style="display: flex; align-items: center; gap: 4px;">
+                <div v-if="uploadingVersionId === row.id && uploadType === 'file'" style="padding: 4px 0;">
+                  <el-progress :percentage="uploadProgress" :stroke-width="6" />
+                </div>
+                <div v-else style="display: flex; align-items: center; gap: 4px;">
                   <el-tooltip v-if="row.fileName" :content="row.fileName" placement="top" :show-after="300">
                     <span class="patch-filename">{{ row.fileName }}</span>
                   </el-tooltip>
                   <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="openExternal(row.filePath)">下载</el-button>
                   <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
-                    <el-button text type="success" size="small" :icon="Upload">{{ row.filePath ? '替换' : '上传' }}</el-button>
+                    <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null">{{ row.filePath ? '替换' : '上传' }}</el-button>
                   </el-upload>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="分享链接">
+            <el-table-column label="分享链接" min-width="200">
               <template #default="{ row }">
-                <el-tooltip v-if="isValidUrl(row.fileShareLink)" :content="row.fileShareLink" placement="top" :show-after="300">
-                  <a :href="row.fileShareLink" target="_blank"><el-icon><Link /></el-icon> 打开</a>
-                </el-tooltip>
-                <span v-else>-</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <el-tooltip v-if="isValidUrl(row.fileShareLink)" :content="row.fileShareLink" placement="top" :show-after="300">
+                    <a :href="row.fileShareLink" target="_blank"><el-icon><Link /></el-icon> 打开</a>
+                  </el-tooltip>
+                  <span v-else>-</span>
+                  <el-button text type="primary" size="small" :icon="Edit" @click.stop="editShareLink(row.id, row.fileShareLink)">{{ isValidUrl(row.fileShareLink) ? '修改' : '添加' }}</el-button>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="汉化补丁" min-width="180">
               <template #default="{ row }">
-                <div style="display: flex; align-items: center; gap: 4px;">
+                <div v-if="uploadingVersionId === row.id && uploadType === 'patch'" style="padding: 4px 0;">
+                  <el-progress :percentage="uploadProgress" :stroke-width="6" />
+                </div>
+                <div v-else style="display: flex; align-items: center; gap: 4px;">
                   <el-tooltip v-if="row.patchFileName" :content="row.patchFileName" placement="top" :show-after="300">
                     <span class="patch-filename">{{ row.patchFileName }}</span>
                   </el-tooltip>
                   <el-button v-if="row.patchFilePath" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadPatch(row.patchFilePath)">下载</el-button>
                   <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadPatch(row.id, f)">
-                    <el-button text type="success" size="small" :icon="Upload">{{ row.patchFilePath ? '替换' : '上传' }}</el-button>
+                    <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null">{{ row.patchFilePath ? '替换' : '上传' }}</el-button>
                   </el-upload>
                 </div>
               </template>
@@ -649,6 +706,7 @@ onMounted(() => {
 .card-placeholder { height: 140px; display: flex; align-items: center; justify-content: center; color: var(--el-text-color-placeholder); font-size: 13px; }
 .card-body { padding: 12px; }
 .chinese-patch-badge { position: absolute; top: 8px; right: 8px; background: linear-gradient(135deg, #e74c3c, #c0392b); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+.no-source-badge { position: absolute; top: 32px; right: 8px; background: linear-gradient(135deg, #e67e22, #d35400); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
 .card-body { padding: 12px; }
 .card-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-subtitle { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

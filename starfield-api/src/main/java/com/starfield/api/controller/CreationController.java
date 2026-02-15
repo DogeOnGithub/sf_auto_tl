@@ -166,4 +166,20 @@ public class CreationController {
         return ResponseEntity.ok(tasks);
     }
 
+    /**
+     * 更新版本分享链接
+     *
+     * @param versionId 版本 ID
+     * @param body      包含 fileShareLink 的请求体
+     * @return 作品响应
+     */
+    @PutMapping("/versions/{versionId}/share-link")
+    public ResponseEntity<CreationResponse> updateVersionShareLink(
+            @PathVariable Long versionId,
+            @RequestBody java.util.Map<String, String> body) {
+        log.info("[updateVersionShareLink] 收到更新分享链接请求 versionId {}", versionId);
+        var response = creationService.updateVersionShareLink(versionId, body.get("fileShareLink"));
+        return ResponseEntity.ok(response);
+    }
+
 }
