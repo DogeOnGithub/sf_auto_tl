@@ -1,0 +1,180 @@
+package com.starfield.api.service;
+
+import com.starfield.api.client.EngineClient;
+import com.starfield.api.dto.FileUploadResponse;
+import com.starfield.api.entity.TaskStatus;
+import com.starfield.api.entity.TranslationTask;
+import com.starfield.api.repository.CustomPromptRepository;
+import com.starfield.api.repository.DictionaryEntryRepository;
+import com.starfield.api.repository.TranslationTaskRepository;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.starfield.api.entity.CustomPrompt;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Objects;
+import java.util.UUID;
+
+/**
+ * 文件上传服务，处理 ESM 文件上传、校验、存储和任务创建
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class FileUploadService {
+
+    final TranslationTaskRepository translationTaskRepository;
+    final CustomPromptRepository customPromptRepository;
+    final DictionaryEntryRepository dictionaryEntryRepository;
+    final EngineClient engineClient;
+
+    @Value("${storage.upload-dir:./uploads}")
+    private String uploadDir;
+
+    private static final String ESM_EXTENSION = ".esm";
+    private static final byte[] ESM_MAGIC_BYTES = "TES4".getBytes();
+
+    /**
+     * 处理文件上传：校验格式、存储文件、创建任务、提交翻译引擎
+     *
+     * @param file              上传的文件
+     * @param creationVersionId 关联的 creation 版本 ID（可选）
+     * @return 上传响应（taskId + fileName）
+     * @throws IOException 文件存储异常
+     */
+    public FileUploadResponse upload(MultipartFile file, Long creationVersionId) throws IOException {
+        var fileName = file.getOriginalFilename();
+        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {}", fileName, creationVersionId);
+
+        validateEsmFormat(file);
+
+        var taskId = UUID.randomUUID().toString();
+        var storedPath = storeFile(file, taskId);
+
+        var task = createTask(taskId, fileName, storedPath);
+        task.setCreationVersionId(creationVersionId);
+        translationTaskRepository.insert(task);
+        log.info("[upload] 任务创建成功 taskId {}", taskId);
+
+        submitToEngine(task);
+
+        return new FileUploadResponse(taskId, fileName);
+    }
+
+    /**
+     * 校验文件是否为有效的 ESM 格式（扩展名 + 魔数字节）
+     *
+     * @param file 待校验的文件
+     */
+    void validateEsmFormat(MultipartFile file) {
+        var fileName = file.getOriginalFilename();
+
+        if (Objects.isNull(fileName) || !fileName.toLowerCase().endsWith(ESM_EXTENSION)) {
+            log.warn("[validateEsmFormat] 文件扩展名不是 .esm fileName {}", fileName);
+            throw new InvalidEsmFormatException();
+        }
+
+        try (InputStream is = file.getInputStream()) {
+            var header = new byte[4];
+            var bytesRead = is.read(header);
+            if (bytesRead < 4 || !java.util.Arrays.equals(header, ESM_MAGIC_BYTES)) {
+                log.warn("[validateEsmFormat] 文件魔数字节不匹配 fileName {}", fileName);
+                throw new InvalidEsmFormatException();
+            }
+        } catch (IOException e) {
+            log.error("[validateEsmFormat] 读取文件头失败 fileName {}", fileName, e);
+            throw new InvalidEsmFormatException();
+        }
+    }
+
+    /**
+     * 存储文件到上传目录
+     *
+     * @param file   上传的文件
+     * @param taskId 任务 ID（用于生成唯一文件名）
+     * @return 存储后的文件路径
+     * @throws IOException 文件写入异常
+     */
+    Path storeFile(MultipartFile file, String taskId) throws IOException {
+        var uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) {
+            Files.createDirectories(uploadPath);
+        }
+
+        var storedFileName = taskId + ESM_EXTENSION;
+        var targetPath = uploadPath.resolve(storedFileName);
+        Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        log.info("[storeFile] 文件存储成功 path {}", targetPath);
+        return targetPath;
+    }
+
+    /**
+     * 创建翻译任务实体
+     *
+     * @param taskId   任务 ID
+     * @param fileName 原始文件名
+     * @param filePath 存储路径
+     * @return 翻译任务实体
+     */
+    TranslationTask createTask(String taskId, String fileName, Path filePath) {
+        var task = new TranslationTask();
+        task.setTaskId(taskId);
+        task.setFileName(fileName);
+        task.setFilePath(filePath.toString());
+        task.setStatus(TaskStatus.waiting);
+        return task;
+    }
+
+    /**
+     * 向翻译引擎提交翻译任务，传递 customPrompt 和 dictionaryEntries
+     *
+     * @param task 翻译任务
+     */
+    void submitToEngine(TranslationTask task) {
+        try {
+            var promptWrapper = new LambdaQueryWrapper<CustomPrompt>()
+                    .eq(CustomPrompt::getIsActive, true);
+            var activePrompt = customPromptRepository.selectOne(promptWrapper);
+            var customPrompt = Objects.nonNull(activePrompt) ? activePrompt.getContent() : null;
+
+            var dictionaryEntries = dictionaryEntryRepository.selectList(null).stream()
+                    .map(entry -> new EngineClient.DictionaryEntryDto(
+                            entry.getSourceText(),
+                            entry.getTargetText()
+                    ))
+                    .toList();
+
+            var absoluteFilePath = Paths.get(task.getFilePath()).toAbsolutePath().toString();
+            var request = new EngineClient.EngineTranslateRequest(
+                    task.getTaskId(),
+                    absoluteFilePath,
+                    task.getTargetLang(),
+                    customPrompt,
+                    dictionaryEntries
+            );
+
+            engineClient.submitTranslation(request);
+            log.info("[submitToEngine] 翻译任务已提交到引擎 taskId {}", task.getTaskId());
+        } catch (Exception e) {
+            log.error("[submitToEngine] 提交翻译引擎失败 taskId {}", task.getTaskId(), e);
+        }
+    }
+
+    /**
+     * 无效 ESM 格式异常
+     */
+    public static class InvalidEsmFormatException extends RuntimeException {
+        public InvalidEsmFormatException() {
+            super("文件不是有效的 ESM 格式");
+        }
+    }
+}

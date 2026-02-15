@@ -1,0 +1,33 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:starfield_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  flyway:
+    enabled: false
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-test.sql
+
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  mapper-locations: classpath*:mapper/**/*.xml
+
+engine:
+  base-url: http://localhost:5000
+
+storage:
+  upload-dir: ./test-uploads
+
+prompt:
+  max-length: 10000

@@ -1,0 +1,33 @@
+# IDE
+.kiro/
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Java
+starfield-api/target/
+starfield-api/.jqwik-database
+*.class
+*.jar
+
+# Python
+starfield-engine/.venv/
+starfield-engine/__pycache__/
+starfield-engine/**/__pycache__/
+starfield-engine/.pytest_cache/
+*.pyc
+*.pyo
+
+# Node
+starfield-web/node_modules/
+starfield-web/dist/
+
+# Uploads
+uploads/

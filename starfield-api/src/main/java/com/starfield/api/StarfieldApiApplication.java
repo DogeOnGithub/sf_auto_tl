@@ -1,0 +1,12 @@
+package com.starfield.api;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class StarfieldApiApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(StarfieldApiApplication.class, args);
+    }
+}
