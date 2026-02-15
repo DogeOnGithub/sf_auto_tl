@@ -63,13 +63,13 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 处理下载文件不存在异常
+     * 处理下载链接为空异常
      */
-    @ExceptionHandler(DownloadService.FileNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleFileNotFound(DownloadService.FileNotFoundException e) {
-        log.error("[handleFileNotFound] {}", e.getMessage());
+    @ExceptionHandler(DownloadService.DownloadUrlEmptyException.class)
+    public ResponseEntity<ErrorResponse> handleDownloadUrlEmpty(DownloadService.DownloadUrlEmptyException e) {
+        log.error("[handleDownloadUrlEmpty] {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse("FILE_NOT_FOUND", "下载文件不存在"));
+                .body(new ErrorResponse("DOWNLOAD_URL_EMPTY", "下载链接为空"));
     }
 
 

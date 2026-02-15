@@ -24,6 +24,7 @@ public record CreationResponse(
             Long id,
             String version,
             String filePath,
+            String fileName,
             String fileShareLink,
             String patchFilePath,
             String patchFileName,

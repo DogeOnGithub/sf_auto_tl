@@ -49,9 +49,12 @@ export function uploadPatch(versionId: number, file: File): Promise<Creation> {
   }).then((res) => res.data)
 }
 
-/** 下载汉化补丁文件 */
-export function downloadPatch(versionId: number): Promise<Blob> {
-  return api.get(`/api/creations/versions/${versionId}/patch`, {
-    responseType: 'blob',
+/** 上传/替换 Mod 文件 */
+export function uploadFile(versionId: number, file: File): Promise<Creation> {
+  var fd = new FormData()
+  fd.append('file', file)
+  return api.post<Creation>(`/api/creations/versions/${versionId}/file`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
   }).then((res) => res.data)
 }
+

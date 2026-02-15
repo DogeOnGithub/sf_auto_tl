@@ -1,19 +1,14 @@
 package com.starfield.api.controller;
 
+import com.starfield.api.dto.DownloadResponse;
 import com.starfield.api.service.DownloadService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-
 /**
- * 下载控制器，提供翻译文件和原始文件的下载接口
+ * 下载控制器，返回 COS 下载链接
  */
 @Slf4j
 @RestController
@@ -24,26 +19,16 @@ public class DownloadController {
     final DownloadService downloadService;
 
     /**
-     * 下载翻译后文件或原始备份文件
+     * 获取翻译结果下载链接
      *
      * @param taskId 任务 ID
-     * @param type   下载类型 translated（默认）或 original
-     * @return 文件二进制流
+     * @return 包含 COS 下载链接和文件名的 JSON 响应
      */
     @GetMapping("/{taskId}/download")
-    public ResponseEntity<Resource> download(
-            @PathVariable String taskId,
-            @RequestParam(defaultValue = "translated") String type) {
-        log.info("[download] 收到下载请求 taskId {} type {}", taskId, type);
+    public ResponseEntity<DownloadResponse> download(@PathVariable String taskId) {
+        log.info("[download] 收到下载请求 taskId {}", taskId);
 
-        var result = downloadService.getDownloadFile(taskId, type);
-        var encodedFileName = URLEncoder.encode(result.fileName(), StandardCharsets.UTF_8)
-                .replace("+", "%20");
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename*=UTF-8''" + encodedFileName)
-                .body(result.resource());
+        var result = downloadService.getDownloadFile(taskId);
+        return ResponseEntity.ok(result);
     }
 }

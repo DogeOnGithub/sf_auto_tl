@@ -46,6 +46,9 @@ public class TranslationTask {
     @TableField("error_message")
     private String errorMessage;
 
+    @TableField("download_url")
+    private String downloadUrl;
+
     @TableField("creation_version_id")
     private Long creationVersionId;
 

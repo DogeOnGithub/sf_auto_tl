@@ -21,6 +21,11 @@ export interface FileUploadResponse {
   fileName: string
 }
 
+export interface DownloadResponse {
+  downloadUrl: string
+  fileName: string
+}
+
 export interface PromptResponse {
   content: string
   isCustom: boolean
@@ -45,6 +50,7 @@ export interface CreationVersion {
   id: number
   version: string
   filePath: string
+  fileName: string
   fileShareLink: string
   patchFilePath: string
   patchFileName: string

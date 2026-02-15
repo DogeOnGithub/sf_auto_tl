@@ -31,6 +31,9 @@ public class CreationVersion {
     @TableField("file_path")
     private String filePath;
 
+    @TableField("file_name")
+    private String fileName;
+
     @TableField("file_share_link")
     private String fileShareLink;
 

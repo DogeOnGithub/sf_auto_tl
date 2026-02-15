@@ -31,3 +31,10 @@ storage:
 
 prompt:
   max-length: 10000
+
+cos:
+  secret-id: test-secret-id
+  secret-key: test-secret-key
+  region: ap-guangzhou
+  bucket-name: test-bucket
+  base-url: https://test-bucket.cos.ap-guangzhou.myqcloud.com

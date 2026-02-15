@@ -13,14 +13,10 @@ import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -35,9 +31,7 @@ public class CreationService {
     final CreationRepository creationRepository;
     final CreationVersionRepository creationVersionRepository;
     final CreationImageRepository creationImageRepository;
-
-    @Value("${storage.upload-dir:./uploads}")
-    private String uploadDir;
+    final CosService cosService;
 
     /**
      * 创建 Mod 作品（含首个版本）
@@ -120,12 +114,13 @@ public class CreationService {
         entity.setFileShareLink(fileShareLink);
 
         if (Objects.nonNull(file) && !file.isEmpty()) {
-            var filePath = saveFile(file, "creations/files");
+            var filePath = saveFile(file, creationId, "files");
             entity.setFilePath(filePath);
+            entity.setFileName(file.getOriginalFilename());
         }
 
         creationVersionRepository.insert(entity);
-        return new CreationResponse.VersionInfo(entity.getId(), entity.getVersion(), entity.getFilePath(), entity.getFileShareLink(), entity.getPatchFilePath(), entity.getPatchFileName(), entity.getCreatedAt());
+        return new CreationResponse.VersionInfo(entity.getId(), entity.getVersion(), entity.getFilePath(), entity.getFileName(), entity.getFileShareLink(), entity.getPatchFilePath(), entity.getPatchFileName(), entity.getCreatedAt());
     }
 
     /**
@@ -226,26 +221,31 @@ public class CreationService {
         if (Objects.isNull(version)) {
             throw new RuntimeException("版本不存在 versionId " + versionId);
         }
-        var filePath = saveFile(patchFile, "creations/patches");
-        version.setPatchFilePath(filePath);
+        var cosUrl = saveFile(patchFile, version.getCreationId(), "patches");
+        version.setPatchFilePath(cosUrl);
         version.setPatchFileName(patchFile.getOriginalFilename());
         creationVersionRepository.updateById(version);
         return getById(version.getCreationId());
     }
 
     /**
-     * 获取汉化补丁文件路径
+     * 上传/替换 Mod 文件并关联到指定版本
      *
      * @param versionId 版本 ID
-     * @return 补丁文件路径
+     * @param file      Mod 文件
+     * @return 作品响应
      */
-    public Path getPatchFilePath(Long versionId) {
-        log.info("[getPatchFilePath] 获取补丁路径 versionId {}", versionId);
+    public CreationResponse uploadFile(Long versionId, MultipartFile file) {
+        log.info("[uploadFile] 上传 Mod 文件 versionId {}", versionId);
         var version = creationVersionRepository.selectById(versionId);
-        if (Objects.isNull(version) || Objects.isNull(version.getPatchFilePath())) {
-            throw new RuntimeException("补丁文件不存在 versionId " + versionId);
+        if (Objects.isNull(version)) {
+            throw new RuntimeException("版本不存在 versionId " + versionId);
         }
-        return Paths.get(version.getPatchFilePath());
+        var cosUrl = saveFile(file, version.getCreationId(), "files");
+        version.setFilePath(cosUrl);
+        version.setFileName(file.getOriginalFilename());
+        creationVersionRepository.updateById(version);
+        return getById(version.getCreationId());
     }
 
     /**
@@ -266,29 +266,36 @@ public class CreationService {
                 .eq("creation_id", creationId)
                 .orderByDesc("created_at");
         return creationVersionRepository.selectList(wrapper).stream()
-                .map(v -> new CreationResponse.VersionInfo(v.getId(), v.getVersion(), v.getFilePath(), v.getFileShareLink(), v.getPatchFilePath(), v.getPatchFileName(), v.getCreatedAt()))
+                .map(v -> new CreationResponse.VersionInfo(v.getId(), v.getVersion(), v.getFilePath(), v.getFileName(), v.getFileShareLink(), v.getPatchFilePath(), v.getPatchFileName(), v.getCreatedAt()))
                 .collect(Collectors.toList());
     }
 
     /**
-     * 保存文件到指定子目录
+     * 保存文件到 COS
+     *
+     * @param file       上传的文件
+     * @param creationId 作品 ID（用于 COS key 隔离）
+     * @param category   文件分类（images/patches/files）
+     * @return COS 公有读 URL
      */
-    private String saveFile(MultipartFile file, String subDir) {
+    private String saveFile(MultipartFile file, Long creationId, String category) {
         try {
-            var dir = Paths.get(uploadDir, subDir).toAbsolutePath();
-            Files.createDirectories(dir);
-            var fileName = UUID.randomUUID() + "_" + file.getOriginalFilename();
-            var target = dir.resolve(fileName);
-            file.transferTo(target.toFile());
-            return target.toString();
+            var originalName = Objects.nonNull(file.getOriginalFilename()) ? file.getOriginalFilename() : "unknown";
+            var cosKey = "creations/" + creationId + "/" + category + "/" + UUID.randomUUID() + "_" + originalName;
+            var contentType = Objects.nonNull(file.getContentType()) ? file.getContentType() : "application/octet-stream";
+            return cosService.uploadStream(file.getInputStream(), cosKey, contentType, file.getSize(), originalName);
         } catch (IOException e) {
-            log.error("[saveFile] 文件保存失败", e);
-            throw new RuntimeException("文件保存失败", e);
+            log.error("[saveFile] 文件上传失败 creationId {} category {}", creationId, category, e);
+            throw new RuntimeException("文件上传失败", e);
         }
     }
 
     /**
-     * 保存图片列表
+     * 保存图片列表到 COS
+     *
+     * @param creationId 作品 ID
+     * @param images     图片文件列表
+     * @return 图片信息列表
      */
     private List<CreationResponse.ImageInfo> saveImages(Long creationId, List<MultipartFile> images) {
         if (Objects.isNull(images) || images.isEmpty()) {
@@ -298,42 +305,30 @@ public class CreationService {
         for (int i = 0; i < images.size(); i++) {
             var img = images.get(i);
             if (img.isEmpty()) continue;
-            var path = saveFile(img, "creations/images");
+            var cosUrl = saveFile(img, creationId, "images");
             var entity = new CreationImage();
             entity.setCreationId(creationId);
-            entity.setImagePath(path);
+            entity.setImagePath(cosUrl);
             entity.setSortOrder(i);
             creationImageRepository.insert(entity);
-            result.add(new CreationResponse.ImageInfo(entity.getId(), "/api/creations/images/" + entity.getId(), i));
+            result.add(new CreationResponse.ImageInfo(entity.getId(), cosUrl, i));
         }
         return result;
     }
 
     /**
-     * 获取作品图片信息列表
+     * 获取作品图片信息列表（URL 为 COS 公有读地址）
+     *
+     * @param creationId 作品 ID
+     * @return 图片信息列表
      */
     private List<CreationResponse.ImageInfo> getImageInfos(Long creationId) {
         var wrapper = new QueryWrapper<CreationImage>()
                 .eq("creation_id", creationId)
                 .orderByAsc("sort_order");
         return creationImageRepository.selectList(wrapper).stream()
-                .map(img -> new CreationResponse.ImageInfo(img.getId(), "/api/creations/images/" + img.getId(), img.getSortOrder()))
+                .map(img -> new CreationResponse.ImageInfo(img.getId(), img.getImagePath(), img.getSortOrder()))
                 .collect(Collectors.toList());
-    }
-
-    /**
-     * 根据图片 ID 获取图片文件路径
-     *
-     * @param imageId 图片 ID
-     * @return 图片文件路径
-     */
-    public Path getImagePath(Long imageId) {
-        log.info("[getImagePath] 获取图片路径 imageId {}", imageId);
-        var image = creationImageRepository.selectById(imageId);
-        if (Objects.isNull(image)) {
-            throw new RuntimeException("图片不存在 imageId " + imageId);
-        }
-        return Paths.get(image.getImagePath());
     }
 
     /**

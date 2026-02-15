@@ -14,9 +14,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * 翻译任务服务，处理任务查询和进度同步
@@ -30,6 +35,7 @@ public class TaskService {
     final CreationVersionRepository creationVersionRepository;
     final CreationRepository creationRepository;
     final EngineClient engineClient;
+    final CosService cosService;
 
     /**
      * 查询翻译任务状态和进度，尝试从引擎同步最新进度
@@ -177,6 +183,13 @@ public class TaskService {
                 task.setErrorMessage(engineStatus.error());
             }
 
+            // 检测状态变为 completed 或 failed 时触发对应处理
+            if (newStatus == TaskStatus.completed && Objects.isNull(task.getDownloadUrl())) {
+                handleTaskCompleted(task);
+            } else if (newStatus == TaskStatus.failed) {
+                handleTaskFailed(task);
+            }
+
             // 同步成功，重置失败计数
             task.setSyncFailCount(0);
             translationTaskRepository.updateById(task);
@@ -199,6 +212,141 @@ public class TaskService {
             task.setErrorMessage("引擎同步失败次数超过 " + MAX_SYNC_FAIL_COUNT + " 次");
         }
         translationTaskRepository.updateById(task);
+    }
+
+    /**
+     * 任务完成后处理：打包 zip → 上传 COS → 保存 download_url → 清理本地文件
+     * 如果打包或上传失败，记录错误日志并保留本地文件
+     *
+     * @param task 翻译任务实体
+     */
+    private void handleTaskCompleted(TranslationTask task) {
+        log.info("[handleTaskCompleted] 开始处理任务完成 taskId {}", task.getTaskId());
+
+        var outputFilePath = task.getOutputFilePath();
+        if (Objects.isNull(outputFilePath) || !Files.exists(Path.of(outputFilePath))) {
+            log.error("[handleTaskCompleted] 输出文件不存在 taskId {} outputFilePath {}", task.getTaskId(), outputFilePath);
+            task.setStatus(TaskStatus.failed);
+            task.setErrorMessage("翻译输出文件不存在");
+            cleanupLocalFiles(task, null);
+            return;
+        }
+
+        Path zipPath = null;
+        try {
+            zipPath = createZipArchive(task);
+            var zipFileName = getZipFileName(task);
+            var cosKey = "translations/" + task.getTaskId() + "/" + zipFileName;
+            var downloadUrl = cosService.uploadFile(zipPath, cosKey, zipFileName);
+            task.setDownloadUrl(downloadUrl);
+            log.info("[handleTaskCompleted] COS 上传成功 taskId {} downloadUrl {}", task.getTaskId(), downloadUrl);
+            cleanupLocalFiles(task, zipPath);
+        } catch (Exception e) {
+            log.error("[handleTaskCompleted] 打包或上传失败 taskId {}", task.getTaskId(), e);
+            // 打包或上传失败，保留本地文件，不改变任务状态
+        }
+    }
+
+    /**
+     * 任务失败后处理：清理本地临时文件
+     *
+     * @param task 翻译任务实体
+     */
+    private void handleTaskFailed(TranslationTask task) {
+        log.info("[handleTaskFailed] 开始处理任务失败 taskId {}", task.getTaskId());
+        cleanupLocalFiles(task, null);
+    }
+
+    /**
+     * 将翻译输出文件和原始备份文件打包为 zip
+     * zip 文件名使用原始文件名去掉 .esm 后缀加 .zip
+     *
+     * @param task 翻译任务实体
+     * @return zip 文件路径
+     * @throws IOException 打包失败时抛出
+     */
+    Path createZipArchive(TranslationTask task) throws IOException {
+        var outputPath = Path.of(task.getOutputFilePath());
+        var zipFileName = getZipFileName(task);
+        var zipPath = outputPath.getParent().resolve(zipFileName);
+
+        log.info("[createZipArchive] 开始打包 taskId {} zipPath {}", task.getTaskId(), zipPath);
+
+        try (var zos = new ZipOutputStream(Files.newOutputStream(zipPath))) {
+            // 添加翻译输出文件
+            if (Files.exists(outputPath)) {
+                zos.putNextEntry(new ZipEntry(outputPath.getFileName().toString()));
+                Files.copy(outputPath, zos);
+                zos.closeEntry();
+            }
+
+            // 添加原始备份文件
+            if (Objects.nonNull(task.getOriginalBackupPath())) {
+                var backupPath = Path.of(task.getOriginalBackupPath());
+                if (Files.exists(backupPath)) {
+                    zos.putNextEntry(new ZipEntry(backupPath.getFileName().toString()));
+                    Files.copy(backupPath, zos);
+                    zos.closeEntry();
+                }
+            }
+        }
+
+        log.info("[createZipArchive] 打包完成 taskId {} zipPath {}", task.getTaskId(), zipPath);
+        return zipPath;
+    }
+
+    /**
+     * 清理任务相关的所有本地临时文件
+     * 删除失败时仅记录警告日志，不抛出异常
+     *
+     * @param task    翻译任务实体
+     * @param zipPath zip 文件路径（可为 null）
+     */
+    void cleanupLocalFiles(TranslationTask task, Path zipPath) {
+        log.info("[cleanupLocalFiles] 开始清理本地文件 taskId {}", task.getTaskId());
+
+        deleteFileQuietly(task.getFilePath(), task.getTaskId());
+        deleteFileQuietly(task.getOutputFilePath(), task.getTaskId());
+        deleteFileQuietly(task.getOriginalBackupPath(), task.getTaskId());
+
+        if (Objects.nonNull(zipPath)) {
+            deleteFileQuietly(zipPath.toString(), task.getTaskId());
+        }
+    }
+
+    /**
+     * 静默删除文件，失败时仅记录警告日志
+     *
+     * @param filePath 文件路径字符串
+     * @param taskId   任务 ID（用于日志）
+     */
+    private void deleteFileQuietly(String filePath, String taskId) {
+        if (Objects.isNull(filePath)) {
+            return;
+        }
+        try {
+            var deleted = Files.deleteIfExists(Path.of(filePath));
+            if (deleted) {
+                log.info("[deleteFileQuietly] 文件已删除 taskId {} filePath {}", taskId, filePath);
+            }
+        } catch (IOException e) {
+            log.warn("[deleteFileQuietly] 文件删除失败 taskId {} filePath {}", taskId, filePath, e);
+        }
+    }
+
+    /**
+     * 根据任务原始文件名生成 zip 文件名
+     * 将 .esm 后缀替换为 .zip
+     *
+     * @param task 翻译任务实体
+     * @return zip 文件名
+     */
+    private String getZipFileName(TranslationTask task) {
+        var fileName = task.getFileName();
+        if (fileName.toLowerCase().endsWith(".esm")) {
+            return fileName.substring(0, fileName.length() - 4) + ".zip";
+        }
+        return fileName + ".zip";
     }
 
     /**

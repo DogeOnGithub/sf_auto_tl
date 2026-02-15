@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, downloadPatch } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
 import type { Creation, TaskResponse } from '@/types'
 
@@ -238,15 +238,10 @@ function statusTagType(status: string): string {
 }
 
 /** 下载翻译文件 */
-async function handleDownloadTranslated(taskId: string, fileName: string) {
+async function handleDownloadTranslated(taskId: string) {
   try {
-    var blob = await downloadFile(taskId, 'translated')
-    var url = URL.createObjectURL(blob)
-    var a = document.createElement('a')
-    a.href = url
-    a.download = fileName
-    a.click()
-    URL.revokeObjectURL(url)
+    var res = await downloadFile(taskId)
+    window.open(res.downloadUrl)
   } catch {
     ElMessage.error('下载失败')
   }
@@ -345,17 +340,27 @@ async function handleUploadPatch(versionId: number, uploadFile: any) {
 }
 
 /** 下载汉化补丁 */
-async function handleDownloadPatch(versionId: number, fileName: string) {
+function handleDownloadPatch(patchFilePath: string) {
+  window.open(patchFilePath)
+}
+
+/** 校验是否为有效 http 链接 */
+function isValidUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  return url.startsWith('http://') || url.startsWith('https://')
+}
+
+/** 上传/替换 Mod 文件 */
+async function handleUploadFile(versionId: number, uploadFileObj: any) {
   try {
-    var blob = await downloadPatch(versionId)
-    var url = URL.createObjectURL(blob)
-    var a = document.createElement('a')
-    a.href = url
-    a.download = fileName
-    a.click()
-    URL.revokeObjectURL(url)
+    var result = await uploadFile(versionId, uploadFileObj.raw)
+    ElMessage.success('文件上传成功')
+    if (selectedCreation.value) {
+      selectedCreation.value = result as any
+    }
+    loadCreations()
   } catch {
-    ElMessage.error('补丁下载失败')
+    ElMessage.error('文件上传失败')
   }
 }
 
@@ -369,7 +374,7 @@ onMounted(() => {
     <!-- 顶部操作栏 -->
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
-      <el-button type="primary" :icon="Plus" @click="openUploadDialog">上传 Mod</el-button>
+      <el-button type="primary" :icon="Plus" @click="openUploadDialog">分享 Mod</el-button>
     </div>
 
     <!-- 卡片列表 -->
@@ -480,8 +485,14 @@ onMounted(() => {
     </el-dialog>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="showDrawer" title="作品详情" size="720px">
+    <el-drawer v-model="showDrawer" title="创作详情" size="900px">
       <template v-if="selectedCreation">
+        <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-section">
+          <div class="detail-images-scroll">
+            <el-image v-for="img in selectedCreation.images" :key="img.id" :src="img.url" fit="cover" class="detail-image" :preview-src-list="selectedCreation.images.map(i => i.url)" :preview-teleported="true" :z-index="3000" />
+          </div>
+        </div>
+
         <div class="detail-section">
           <div class="detail-header">
             <h4>基本信息</h4>
@@ -491,39 +502,41 @@ onMounted(() => {
             <el-descriptions-item label="名称">{{ selectedCreation.name }}</el-descriptions-item>
             <el-descriptions-item label="译名">{{ selectedCreation.translatedName || '-' }}</el-descriptions-item>
             <el-descriptions-item label="作者">{{ selectedCreation.author || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="链接">
+              <div style="display: flex; gap: 8px;">
+                <el-button v-if="isValidUrl(selectedCreation.ccLink)" text type="primary" size="small" :icon="Link" @click.stop="window.open(selectedCreation.ccLink)">CC 链接</el-button>
+                <el-button v-if="isValidUrl(selectedCreation.nexusLink)" text type="primary" size="small" :icon="Link" @click.stop="window.open(selectedCreation.nexusLink)">N 网链接</el-button>
+                <span v-if="!isValidUrl(selectedCreation.ccLink) && !isValidUrl(selectedCreation.nexusLink)">-</span>
+              </div>
+            </el-descriptions-item>
             <el-descriptions-item label="创建时间">{{ formatTime(selectedCreation.createdAt) }}</el-descriptions-item>
             <el-descriptions-item label="更新时间">{{ formatTime(selectedCreation.updatedAt) }}</el-descriptions-item>
           </el-descriptions>
         </div>
 
         <div class="detail-section">
-          <h4>链接</h4>
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="CC 链接">
-              <el-tooltip v-if="selectedCreation.ccLink" :content="selectedCreation.ccLink" placement="top" :show-after="300">
-                <a :href="selectedCreation.ccLink" target="_blank"><el-icon><Link /></el-icon> 打开</a>
-              </el-tooltip>
-              <span v-else>-</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="N 网链接">
-              <el-tooltip v-if="selectedCreation.nexusLink" :content="selectedCreation.nexusLink" placement="top" :show-after="300">
-                <a :href="selectedCreation.nexusLink" target="_blank"><el-icon><Link /></el-icon> 打开</a>
-              </el-tooltip>
-              <span v-else>-</span>
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-
-        <div class="detail-section">
           <div class="detail-header">
-            <h4>版本列表</h4>
+            <h4>版本</h4>
             <el-button text type="primary" :icon="Upload" @click="openAddVersionDialog">添加版本</el-button>
           </div>
           <el-table :data="selectedCreation.versions" border size="small" style="width: 100%">
             <el-table-column prop="version" label="版本" width="80" />
+            <el-table-column label="Mod 文件" min-width="180">
+              <template #default="{ row }">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <el-tooltip v-if="row.fileName" :content="row.fileName" placement="top" :show-after="300">
+                    <span class="patch-filename">{{ row.fileName }}</span>
+                  </el-tooltip>
+                  <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="window.open(row.filePath)">下载</el-button>
+                  <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
+                    <el-button text type="success" size="small" :icon="Upload">{{ row.filePath ? '替换' : '上传' }}</el-button>
+                  </el-upload>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="分享链接">
               <template #default="{ row }">
-                <el-tooltip v-if="row.fileShareLink" :content="row.fileShareLink" placement="top" :show-after="300">
+                <el-tooltip v-if="isValidUrl(row.fileShareLink)" :content="row.fileShareLink" placement="top" :show-after="300">
                   <a :href="row.fileShareLink" target="_blank"><el-icon><Link /></el-icon> 打开</a>
                 </el-tooltip>
                 <span v-else>-</span>
@@ -535,7 +548,7 @@ onMounted(() => {
                   <el-tooltip v-if="row.patchFileName" :content="row.patchFileName" placement="top" :show-after="300">
                     <span class="patch-filename">{{ row.patchFileName }}</span>
                   </el-tooltip>
-                  <el-button v-if="row.patchFilePath" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadPatch(row.id, row.patchFileName || `patch_v${row.version}.zip`)">下载</el-button>
+                  <el-button v-if="row.patchFilePath" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadPatch(row.patchFilePath)">下载</el-button>
                   <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadPatch(row.id, f)">
                     <el-button text type="success" size="small" :icon="Upload">{{ row.patchFilePath ? '替换' : '上传' }}</el-button>
                   </el-upload>
@@ -553,10 +566,9 @@ onMounted(() => {
           </el-table>
         </div>
 
-        <div class="detail-section">
-          <h4>翻译任务</h4>
-          <div v-loading="loadingTasks">
-            <el-table v-if="creationTasks.length > 0" :data="creationTasks" border size="small" style="width: 100%">
+        <div v-if="creationTasks.length > 0" class="detail-section">
+          <h4>AI 翻译</h4>
+          <el-table :data="creationTasks" border size="small" style="width: 100%">
               <el-table-column label="文件" min-width="120">
                 <template #default="{ row }">{{ row.fileName }}</template>
               </el-table-column>
@@ -573,12 +585,10 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="80" align="center">
                 <template #default="{ row }">
-                  <el-button v-if="row.status === 'completed'" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadTranslated(row.taskId, row.fileName)">下载</el-button>
+                  <el-button v-if="row.status === 'completed'" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadTranslated(row.taskId)">下载</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else description="暂无翻译任务" :image-size="40" />
-          </div>
         </div>
 
         <div v-if="selectedCreation.tags && selectedCreation.tags.length > 0" class="detail-section">
@@ -588,20 +598,13 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-section">
-          <h4>图片</h4>
-          <div class="detail-images">
-            <el-image v-for="img in selectedCreation.images" :key="img.id" :src="img.url" fit="cover" class="detail-image" :preview-src-list="selectedCreation.images.map(i => i.url)" />
-          </div>
-        </div>
-
         <div v-if="selectedCreation.remark" class="detail-section">
           <h4>备注</h4>
           <p class="detail-remark">{{ selectedCreation.remark }}</p>
         </div>
 
         <div class="detail-actions">
-          <el-button type="danger" :icon="Delete" @click="handleDelete(selectedCreation.id)">删除作品</el-button>
+          <el-button type="danger" :icon="Delete" @click="handleDelete(selectedCreation.id)">不再分享</el-button>
         </div>
       </template>
     </el-drawer>
@@ -648,8 +651,10 @@ onMounted(() => {
 .detail-section h4 { margin: 0 0 8px; font-size: 14px; color: var(--el-text-color-primary); }
 .detail-header { display: flex; justify-content: space-between; align-items: center; }
 .detail-tags { display: flex; gap: 6px; flex-wrap: wrap; }
-.detail-images { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.detail-image { width: 100%; height: 120px; border-radius: 4px; }
+.detail-images-scroll { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.detail-images-scroll::-webkit-scrollbar { height: 6px; }
+.detail-images-scroll::-webkit-scrollbar-thumb { background: var(--el-border-color); border-radius: 3px; }
+.detail-image { flex-shrink: 0; width: 160px; height: 120px; border-radius: 4px; }
 .detail-remark { margin: 0; font-size: 13px; color: var(--el-text-color-regular); white-space: pre-wrap; }
 .detail-actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--el-border-color-lighter); }
 .patch-filename { font-size: 12px; color: var(--el-text-color-regular); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

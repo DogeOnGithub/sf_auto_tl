@@ -138,24 +138,19 @@ public class CreationController {
     }
 
     /**
-     * 下载汉化补丁文件
+     * 上传/替换 Mod 文件关联到指定版本
      *
      * @param versionId 版本 ID
-     * @return 补丁文件
+     * @param file      Mod 文件
+     * @return 作品响应
      */
-    @GetMapping("/versions/{versionId}/patch")
-    public ResponseEntity<Resource> downloadPatch(@PathVariable Long versionId) {
-        log.info("[downloadPatch] 下载补丁 versionId {}", versionId);
-        var path = creationService.getPatchFilePath(versionId);
-        var resource = new FileSystemResource(path);
-        if (!resource.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-        var fileName = path.getFileName().toString();
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
-                .body(resource);
+    @PostMapping("/versions/{versionId}/file")
+    public ResponseEntity<CreationResponse> uploadFile(
+            @PathVariable Long versionId,
+            @RequestPart("file") MultipartFile file) {
+        log.info("[uploadFile] 收到上传 Mod 文件请求 versionId {}", versionId);
+        var response = creationService.uploadFile(versionId, file);
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -171,22 +166,4 @@ public class CreationController {
         return ResponseEntity.ok(tasks);
     }
 
-    /**
-     * 获取图片资源
-     *
-     * @param imageId 图片 ID
-     * @return 图片文件
-     */
-    @GetMapping("/images/{imageId}")
-    public ResponseEntity<Resource> getImage(@PathVariable Long imageId) {
-        log.info("[getImage] 获取图片 imageId {}", imageId);
-        var path = creationService.getImagePath(imageId);
-        var resource = new FileSystemResource(path);
-        if (!resource.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-        var contentType = Objects.nonNull(path.getFileName()) && path.getFileName().toString().endsWith(".png")
-                ? MediaType.IMAGE_PNG : MediaType.IMAGE_JPEG;
-        return ResponseEntity.ok().contentType(contentType).body(resource);
-    }
 }

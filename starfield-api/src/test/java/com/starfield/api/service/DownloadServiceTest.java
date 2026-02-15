@@ -5,14 +5,9 @@ import com.starfield.api.entity.TranslationTask;
 import com.starfield.api.repository.TranslationTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,54 +22,29 @@ class DownloadServiceTest {
     @InjectMocks
     DownloadService downloadService;
 
-    @TempDir
-    Path tempDir;
-
-    /** 下载翻译文件应返回正确的文件名格式 */
+    /** 已完成任务应返回 COS URL 和 zip 文件名 */
     @Test
-    void getDownloadFile_translated_returnsFileWithLangSuffix() throws IOException {
-        var outputFile = tempDir.resolve("output.esm");
-        Files.writeString(outputFile, "translated content");
-
+    void getDownloadFile_completed_returnsDownloadResponse() {
         var task = createCompletedTask("task-1", "StarfieldMod.esm",
-                null, outputFile.toString(), "zh-CN");
+                "https://cos.example.com/translations/task-1/StarfieldMod.zip");
         when(translationTaskRepository.selectById("task-1")).thenReturn(task);
 
-        var result = downloadService.getDownloadFile("task-1", "translated");
+        var result = downloadService.getDownloadFile("task-1");
 
-        assertThat(result.fileName()).isEqualTo("StarfieldMod_zh-CN.esm");
-        assertThat(result.resource().exists()).isTrue();
+        assertThat(result.downloadUrl()).isEqualTo("https://cos.example.com/translations/task-1/StarfieldMod.zip");
+        assertThat(result.fileName()).isEqualTo("StarfieldMod.zip");
     }
 
-    /** 下载原始文件应返回原始文件名 */
+    /** 无扩展名的文件名应正确生成 zip 文件名 */
     @Test
-    void getDownloadFile_original_returnsOriginalFileName() throws IOException {
-        var backupFile = tempDir.resolve("backup.esm");
-        Files.writeString(backupFile, "original content");
-
-        var task = createCompletedTask("task-2", "StarfieldMod.esm",
-                backupFile.toString(), "/output/out.esm", "zh-CN");
+    void getDownloadFile_fileNameWithoutExtension_returnsZipName() {
+        var task = createCompletedTask("task-2", "ModFile",
+                "https://cos.example.com/translations/task-2/ModFile.zip");
         when(translationTaskRepository.selectById("task-2")).thenReturn(task);
 
-        var result = downloadService.getDownloadFile("task-2", "original");
+        var result = downloadService.getDownloadFile("task-2");
 
-        assertThat(result.fileName()).isEqualTo("StarfieldMod.esm");
-        assertThat(result.resource().exists()).isTrue();
-    }
-
-    /** type 默认为 translated */
-    @Test
-    void getDownloadFile_defaultType_returnsTranslatedFile() throws IOException {
-        var outputFile = tempDir.resolve("output.esm");
-        Files.writeString(outputFile, "translated content");
-
-        var task = createCompletedTask("task-3", "MyMod.esm",
-                null, outputFile.toString(), "en-US");
-        when(translationTaskRepository.selectById("task-3")).thenReturn(task);
-
-        var result = downloadService.getDownloadFile("task-3", "translated");
-
-        assertThat(result.fileName()).isEqualTo("MyMod_en-US.esm");
+        assertThat(result.fileName()).isEqualTo("ModFile.zip");
     }
 
     /** 任务不存在应抛出 TaskNotFoundException */
@@ -82,7 +52,7 @@ class DownloadServiceTest {
     void getDownloadFile_taskNotFound_throwsException() {
         when(translationTaskRepository.selectById("not-exist")).thenReturn(null);
 
-        assertThatThrownBy(() -> downloadService.getDownloadFile("not-exist", "translated"))
+        assertThatThrownBy(() -> downloadService.getDownloadFile("not-exist"))
                 .isInstanceOf(TaskService.TaskNotFoundException.class);
     }
 
@@ -90,11 +60,11 @@ class DownloadServiceTest {
     @Test
     void getDownloadFile_taskNotCompleted_throwsException() {
         var task = new TranslationTask();
-        task.setTaskId("task-4");
+        task.setTaskId("task-3");
         task.setStatus(TaskStatus.translating);
-        when(translationTaskRepository.selectById("task-4")).thenReturn(task);
+        when(translationTaskRepository.selectById("task-3")).thenReturn(task);
 
-        assertThatThrownBy(() -> downloadService.getDownloadFile("task-4", "translated"))
+        assertThatThrownBy(() -> downloadService.getDownloadFile("task-3"))
                 .isInstanceOf(DownloadService.TaskNotCompletedException.class);
     }
 
@@ -102,11 +72,11 @@ class DownloadServiceTest {
     @Test
     void getDownloadFile_waitingTask_throwsException() {
         var task = new TranslationTask();
-        task.setTaskId("task-5");
+        task.setTaskId("task-4");
         task.setStatus(TaskStatus.waiting);
-        when(translationTaskRepository.selectById("task-5")).thenReturn(task);
+        when(translationTaskRepository.selectById("task-4")).thenReturn(task);
 
-        assertThatThrownBy(() -> downloadService.getDownloadFile("task-5", "translated"))
+        assertThatThrownBy(() -> downloadService.getDownloadFile("task-4"))
                 .isInstanceOf(DownloadService.TaskNotCompletedException.class);
     }
 
@@ -114,50 +84,30 @@ class DownloadServiceTest {
     @Test
     void getDownloadFile_failedTask_throwsException() {
         var task = new TranslationTask();
-        task.setTaskId("task-6");
+        task.setTaskId("task-5");
         task.setStatus(TaskStatus.failed);
-        when(translationTaskRepository.selectById("task-6")).thenReturn(task);
+        when(translationTaskRepository.selectById("task-5")).thenReturn(task);
 
-        assertThatThrownBy(() -> downloadService.getDownloadFile("task-6", "translated"))
+        assertThatThrownBy(() -> downloadService.getDownloadFile("task-5"))
                 .isInstanceOf(DownloadService.TaskNotCompletedException.class);
     }
 
-    /** 文件不存在应抛出 FileNotFoundException */
+    /** 任务完成但 download_url 为空应抛出 DownloadUrlEmptyException */
     @Test
-    void getDownloadFile_fileNotExists_throwsException() {
-        var task = createCompletedTask("task-7", "mod.esm",
-                null, "/nonexistent/path.esm", "zh-CN");
-        when(translationTaskRepository.selectById("task-7")).thenReturn(task);
+    void getDownloadFile_downloadUrlEmpty_throwsException() {
+        var task = createCompletedTask("task-6", "mod.esm", null);
+        when(translationTaskRepository.selectById("task-6")).thenReturn(task);
 
-        assertThatThrownBy(() -> downloadService.getDownloadFile("task-7", "translated"))
-                .isInstanceOf(DownloadService.FileNotFoundException.class);
+        assertThatThrownBy(() -> downloadService.getDownloadFile("task-6"))
+                .isInstanceOf(DownloadService.DownloadUrlEmptyException.class);
     }
 
-    /** 无扩展名的文件名应正确处理 */
-    @Test
-    void getDownloadFile_fileNameWithoutExtension_handlesCorrectly() throws IOException {
-        var outputFile = tempDir.resolve("output.esm");
-        Files.writeString(outputFile, "content");
-
-        var task = createCompletedTask("task-8", "ModFile",
-                null, outputFile.toString(), "zh-CN");
-        when(translationTaskRepository.selectById("task-8")).thenReturn(task);
-
-        var result = downloadService.getDownloadFile("task-8", "translated");
-
-        assertThat(result.fileName()).isEqualTo("ModFile_zh-CN.esm");
-    }
-
-    private TranslationTask createCompletedTask(String taskId, String fileName,
-                                                 String backupPath, String outputPath,
-                                                 String targetLang) {
+    private TranslationTask createCompletedTask(String taskId, String fileName, String downloadUrl) {
         var task = new TranslationTask();
         task.setTaskId(taskId);
         task.setFileName(fileName);
         task.setStatus(TaskStatus.completed);
-        task.setOriginalBackupPath(backupPath);
-        task.setOutputFilePath(outputPath);
-        task.setTargetLang(targetLang);
+        task.setDownloadUrl(downloadUrl);
         return task;
     }
 }

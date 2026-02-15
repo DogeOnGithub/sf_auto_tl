@@ -48,7 +48,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         </el-menu-item>
         <el-menu-item index="dictionary">
           <el-icon><Collection /></el-icon>
-          <span>固定词典</span>
+          <span>词典</span>
         </el-menu-item>
         <el-menu-item index="creations">
           <el-icon><Folder /></el-icon>
@@ -76,7 +76,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         </div>
 
         <div v-show="activeMenu === 'dictionary'" class="page-content">
-          <h2 class="page-title">固定词典</h2>
+          <h2 class="page-title">词典</h2>
           <DictionaryManager />
         </div>
 

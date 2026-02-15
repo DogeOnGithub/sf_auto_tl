@@ -1,12 +1,12 @@
 package com.starfield.api.controller;
 
+import com.starfield.api.dto.DownloadResponse;
 import com.starfield.api.service.DownloadService;
 import com.starfield.api.service.TaskService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.Mockito.when;
@@ -22,59 +22,24 @@ class DownloadControllerTest {
     @MockBean
     DownloadService downloadService;
 
-    /**
-     * 下载翻译文件应返回 200 和正确的 Content-Disposition
-     */
+    /** 下载请求应返回 200 和 JSON 响应 */
     @Test
-    void download_translated_returns200WithFile() throws Exception {
-        var resource = new ByteArrayResource("translated content".getBytes());
-        var result = new DownloadService.DownloadResult(resource, "StarfieldMod_zh-CN.esm");
-        when(downloadService.getDownloadFile("task-1", "translated")).thenReturn(result);
+    void download_completed_returns200WithJson() throws Exception {
+        var response = new DownloadResponse(
+                "https://cos.example.com/translations/task-1/StarfieldMod.zip",
+                "StarfieldMod.zip");
+        when(downloadService.getDownloadFile("task-1")).thenReturn(response);
 
-        mockMvc.perform(get("/api/tasks/task-1/download").param("type", "translated"))
+        mockMvc.perform(get("/api/tasks/task-1/download"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename*=UTF-8''StarfieldMod_zh-CN.esm"))
-                .andExpect(content().bytes("translated content".getBytes()));
+                .andExpect(jsonPath("$.downloadUrl").value("https://cos.example.com/translations/task-1/StarfieldMod.zip"))
+                .andExpect(jsonPath("$.fileName").value("StarfieldMod.zip"));
     }
 
-    /**
-     * 下载原始文件应返回 200 和原始文件名
-     */
-    @Test
-    void download_original_returns200WithOriginalFile() throws Exception {
-        var resource = new ByteArrayResource("original content".getBytes());
-        var result = new DownloadService.DownloadResult(resource, "StarfieldMod.esm");
-        when(downloadService.getDownloadFile("task-2", "original")).thenReturn(result);
-
-        mockMvc.perform(get("/api/tasks/task-2/download").param("type", "original"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename*=UTF-8''StarfieldMod.esm"))
-                .andExpect(content().bytes("original content".getBytes()));
-    }
-
-    /**
-     * 不传 type 参数应默认为 translated
-     */
-    @Test
-    void download_noTypeParam_defaultsToTranslated() throws Exception {
-        var resource = new ByteArrayResource("content".getBytes());
-        var result = new DownloadService.DownloadResult(resource, "Mod_zh-CN.esm");
-        when(downloadService.getDownloadFile("task-3", "translated")).thenReturn(result);
-
-        mockMvc.perform(get("/api/tasks/task-3/download"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename*=UTF-8''Mod_zh-CN.esm"));
-    }
-
-    /**
-     * 任务不存在应返回 404
-     */
+    /** 任务不存在应返回 404 */
     @Test
     void download_taskNotFound_returns404() throws Exception {
-        when(downloadService.getDownloadFile("not-exist", "translated"))
+        when(downloadService.getDownloadFile("not-exist"))
                 .thenThrow(new TaskService.TaskNotFoundException("not-exist"));
 
         mockMvc.perform(get("/api/tasks/not-exist/download"))
@@ -83,30 +48,27 @@ class DownloadControllerTest {
                 .andExpect(jsonPath("$.message").value("翻译任务不存在"));
     }
 
-    /**
-     * 任务未完成应返回 409
-     */
+    /** 任务未完成应返回 409 */
     @Test
     void download_taskNotCompleted_returns409() throws Exception {
-        when(downloadService.getDownloadFile("task-4", "translated"))
-                .thenThrow(new DownloadService.TaskNotCompletedException("task-4"));
+        when(downloadService.getDownloadFile("task-2"))
+                .thenThrow(new DownloadService.TaskNotCompletedException("task-2"));
 
-        mockMvc.perform(get("/api/tasks/task-4/download"))
+        mockMvc.perform(get("/api/tasks/task-2/download"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("TASK_NOT_COMPLETED"))
                 .andExpect(jsonPath("$.message").value("翻译任务尚未完成"));
     }
 
-    /**
-     * 文件不存在应返回 404
-     */
+    /** 下载链接为空应返回 404 */
     @Test
-    void download_fileNotFound_returns404() throws Exception {
-        when(downloadService.getDownloadFile("task-5", "translated"))
-                .thenThrow(new DownloadService.FileNotFoundException("task-5", "/path"));
+    void download_downloadUrlEmpty_returns404() throws Exception {
+        when(downloadService.getDownloadFile("task-3"))
+                .thenThrow(new DownloadService.DownloadUrlEmptyException("task-3"));
 
-        mockMvc.perform(get("/api/tasks/task-5/download"))
+        mockMvc.perform(get("/api/tasks/task-3/download"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("FILE_NOT_FOUND"));
+                .andExpect(jsonPath("$.error").value("DOWNLOAD_URL_EMPTY"))
+                .andExpect(jsonPath("$.message").value("下载链接为空"));
     }
 }

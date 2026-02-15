@@ -22,7 +22,7 @@ RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
 def _get_client() -> OpenAI:
     """创建 OpenAI 客户端，从环境变量读取配置。"""
     return OpenAI(
-        api_key=os.environ.get("LLM_API_KEY", "sk-76916acd42eb444dbf456625df9cba49"),
+        api_key=os.environ.get("LLM_API_KEY", ""),
         base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
     )
 

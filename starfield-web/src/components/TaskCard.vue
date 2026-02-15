@@ -57,15 +57,10 @@ const showProgress = computed(() => {
 })
 
 /** 触发文件下载 */
-async function handleDownload(type: 'translated' | 'original') {
+async function handleDownload() {
   try {
-    var blob = await downloadFile(props.task.taskId, type)
-    var url = URL.createObjectURL(blob)
-    var a = document.createElement('a')
-    a.href = url
-    a.download = props.task.fileName
-    a.click()
-    URL.revokeObjectURL(url)
+    var res = await downloadFile(props.task.taskId)
+    window.open(res.downloadUrl)
   } catch {
     ElMessage.error('下载失败，请重试')
   }
@@ -99,11 +94,8 @@ async function handleDownload(type: 'translated' | 'original') {
     </div>
 
     <div v-if="task.status === 'completed'" class="task-actions">
-      <el-button type="primary" size="small" :icon="Download" @click="handleDownload('translated')">
+      <el-button type="primary" size="small" :icon="Download" @click="handleDownload()">
         下载翻译文件
-      </el-button>
-      <el-button size="small" :icon="Download" @click="handleDownload('original')">
-        下载原始文件
       </el-button>
     </div>
 
