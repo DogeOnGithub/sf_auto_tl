@@ -48,12 +48,11 @@ public class CreationService {
     public CreationResponse create(CreationRequest request, MultipartFile file, List<MultipartFile> images) {
         log.info("[create] 创建作品 name {} version {}", request.name(), request.version());
 
-        // 检查同名 mod 是否已存在
-        var existingWrapper = new QueryWrapper<Creation>().eq("name", request.name());
-        var existing = creationRepository.selectOne(existingWrapper);
+        // 查找已存在的同一 mod（按名称、CC 链接、N 网链接匹配）
+        var existing = findExistingCreation(request);
 
         if (Objects.nonNull(existing)) {
-            // 同名 mod 已存在，添加新版本
+            log.info("[create] 匹配到已有作品 id {} name {}", existing.getId(), existing.getName());
             return addVersion(existing, request, file, images);
         }
 
@@ -75,6 +74,78 @@ public class CreationService {
         var imageInfos = saveImages(creation.getId(), images);
 
         return toResponse(creation, List.of(versionInfo), imageInfos);
+    }
+
+    /**
+     * 查找已存在的同一 mod（按名称、CC 链接最后一段、N 网链接匹配）
+     */
+    private Creation findExistingCreation(CreationRequest request) {
+        // 1. 按名称匹配
+        var byName = creationRepository.selectOne(new QueryWrapper<Creation>().eq("name", request.name()));
+        if (Objects.nonNull(byName)) return byName;
+
+        // 2. 按 CC 链接最后一段路径匹配（忽略 lang 参数等差异）
+        var requestCcSlug = extractCcSlug(request.ccLink());
+        if (Objects.nonNull(requestCcSlug)) {
+            var ccCandidates = creationRepository.selectList(
+                    new QueryWrapper<Creation>().isNotNull("cc_link").ne("cc_link", ""));
+            var byCc = ccCandidates.stream()
+                    .filter(c -> requestCcSlug.equals(extractCcSlug(c.getCcLink())))
+                    .findFirst()
+                    .orElse(null);
+            if (Objects.nonNull(byCc)) return byCc;
+        }
+
+        // 3. 按 N 网链接匹配（提取路径部分比较，忽略 query 参数）
+        var requestNexusPath = extractUrlPath(request.nexusLink());
+        if (Objects.nonNull(requestNexusPath)) {
+            var nexusCandidates = creationRepository.selectList(
+                    new QueryWrapper<Creation>().isNotNull("nexus_link").ne("nexus_link", ""));
+            var byNexus = nexusCandidates.stream()
+                    .filter(c -> requestNexusPath.equals(extractUrlPath(c.getNexusLink())))
+                    .findFirst()
+                    .orElse(null);
+            if (Objects.nonNull(byNexus)) return byNexus;
+        }
+
+        return null;
+    }
+
+    /**
+     * 提取 CC 链接的最后一段路径作为标识（忽略 lang 等路径参数差异）
+     * 例如 https://creations.bethesda.net/en/starfield/details/xxx/name → name
+     */
+    private String extractCcSlug(String ccLink) {
+        if (Objects.isNull(ccLink) || ccLink.isBlank()) return null;
+        try {
+            var uri = java.net.URI.create(ccLink);
+            var path = uri.getPath();
+            if (Objects.isNull(path) || path.isBlank()) return null;
+            // 去掉末尾斜杠后取最后一段
+            if (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+            var lastSlash = path.lastIndexOf('/');
+            return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+        } catch (Exception e) {
+            log.warn("[extractCcSlug] 解析 CC 链接失败 ccLink {}", ccLink);
+            return null;
+        }
+    }
+
+    /**
+     * 提取 URL 的路径部分（去掉 query 和 fragment）
+     */
+    private String extractUrlPath(String url) {
+        if (Objects.isNull(url) || url.isBlank()) return null;
+        try {
+            var uri = java.net.URI.create(url);
+            var path = uri.getPath();
+            if (Objects.isNull(path) || path.isBlank()) return null;
+            if (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+            return uri.getHost() + path;
+        } catch (Exception e) {
+            log.warn("[extractUrlPath] 解析 URL 失败 url {}", url);
+            return null;
+        }
     }
 
     /**

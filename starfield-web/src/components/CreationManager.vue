@@ -438,15 +438,18 @@ onMounted(() => {
           <el-image v-if="item.images && item.images.length > 0" :src="item.images[0].url" fit="cover" class="card-image" />
           <div v-else class="card-placeholder">暂无图片</div>
           <span v-if="item.hasChinesePatch" class="chinese-patch-badge">中文补丁</span>
-          <span v-if="hasNoSourceFile(item)" class="no-source-badge">无源文件</span>
+          <span v-if="hasNoSourceFile(item)" class="no-source-badge">无原文件</span>
         </div>
         <div class="card-body">
           <div class="card-title">{{ item.name }}</div>
           <div v-if="item.translatedName" class="card-subtitle">{{ item.translatedName }}</div>
           <div class="card-meta">
             <span v-if="item.author">{{ item.author }}</span>
-            <span v-if="item.versions && item.versions.length > 0">v{{ getLatestVersion(item) }}</span>
             <span v-if="item.versions && item.versions.length > 1" class="version-count">{{ item.versions.length }} 个版本</span>
+          </div>
+          <div v-if="item.versions && item.versions.length > 0" class="card-version-row">
+            <span>v{{ getLatestVersion(item) }}</span>
+            <span>{{ formatTime(item.versions[0].createdAt) }}</span>
           </div>
           <div v-if="item.tags && item.tags.length > 0" class="card-tags">
             <el-tag v-for="tag in item.tags.slice(0, 3)" :key="tag" size="small" type="info">{{ tag }}</el-tag>
@@ -714,6 +717,8 @@ onMounted(() => {
 .card-subtitle { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-meta { display: flex; gap: 8px; font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 6px; }
 .card-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+.card-time { font-size: 11px; color: var(--el-text-color-placeholder); margin-top: 4px; }
+.card-version-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--el-text-color-placeholder); margin-top: 4px; }
 .pagination { display: flex; justify-content: center; margin-top: 24px; }
 .detail-section { margin-bottom: 20px; }
 .detail-section h4 { margin: 0 0 8px; font-size: 14px; color: var(--el-text-color-primary); }

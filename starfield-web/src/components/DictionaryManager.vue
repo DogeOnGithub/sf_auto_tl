@@ -102,6 +102,7 @@ onMounted(fetchEntries)
 
 <template>
   <el-card header="固定词典管理">
+    <p class="dict-desc">词典中的词条会在翻译时作为参考提供给 AI，确保特定术语、名称的翻译保持一致。例如将 "Starborn" 固定翻译为 "星裔"。</p>
     <div class="toolbar">
       <el-input
         v-model="keyword"
@@ -141,6 +142,7 @@ onMounted(fetchEntries)
 </template>
 
 <style scoped>
+.dict-desc { margin: 0 0 16px; font-size: 13px; color: var(--el-text-color-secondary); line-height: 1.6; }
 .toolbar {
   display: flex;
   gap: 12px;
