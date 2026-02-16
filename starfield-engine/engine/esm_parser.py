@@ -43,6 +43,14 @@ def _build_record_id(record_type: bytes, form_id: int, subrecord_type: bytes) ->
     return f"{record_type.decode('ascii')}:{form_id:08X}:{subrecord_type.decode('ascii')}"
 
 
+def _is_printable_text(text: str) -> bool:
+    """检查文本是否为可打印的有效文本，过滤二进制数据被误解码的情况。"""
+    if not text:
+        return False
+    printable_count = sum(1 for c in text if c.isprintable() or c in ('\n', '\r', '\t'))
+    return printable_count / len(text) >= 0.8
+
+
 def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[StringRecord]:
     """解析记录内的子记录，提取可翻译文本。"""
     records = []
@@ -69,7 +77,7 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
 
         if sub_type in TRANSLATABLE_SUBRECORD_TYPES and sub_size > 0:
             text = _decode_text(data[offset : offset + sub_size])
-            if text:
+            if text and _is_printable_text(text):
                 record_id = _build_record_id(record_type, form_id, sub_type)
                 records.append(StringRecord(record_id=record_id, text=text))
 

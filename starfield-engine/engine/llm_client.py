@@ -63,6 +63,11 @@ def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str
             )
             result[record.record_id] = record.text
 
+        logger.info(
+            "[_parse_response] record_id %s 原文 %s 译文 %s",
+            record.record_id, record.text, result[record.record_id],
+        )
+
     return result
 
 
