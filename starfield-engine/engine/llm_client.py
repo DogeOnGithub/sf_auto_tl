@@ -33,9 +33,9 @@ def _get_model() -> str:
 
 
 def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str, str]:
-    """解析 LLM 返回的翻译文本，按行与原始记录 ID 匹配。
+    """解析 LLM 返回的翻译文本，按编号与原始记录 ID 匹配。
 
-    LLM 返回的每行翻译对应输入的每行原文，按顺序匹配。
+    LLM 返回格式为 [编号] 译文，按编号匹配对应的原始记录。
 
     Args:
         response_text: LLM 返回的翻译文本。
@@ -44,22 +44,31 @@ def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str
     Returns:
         record_id -> translated_text 的映射字典。
     """
-    lines = response_text.strip().split("\n")
+    import re
+
+    # 解析 [编号] 译文 格式
+    translations: dict[int, str] = {}
+    for line in response_text.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        match = re.match(r"\[(\d+)\]\s*(.*)", line)
+        if match:
+            idx = int(match.group(1))
+            text = match.group(2).strip()
+            translations[idx] = text
+
     result: dict[str, str] = {}
 
     for i, record in enumerate(records):
-        if i < len(lines):
-            translated = lines[i].strip()
-            if translated:
-                result[record.record_id] = translated
-            else:
-                # 空行回退到原文
-                result[record.record_id] = record.text
+        idx = i + 1
+        translated = translations.get(idx, "")
+        if translated:
+            result[record.record_id] = translated
         else:
-            # 返回行数不足，回退到原文
             logger.warning(
-                "[_parse_response] 翻译行数不足 expected %d got %d record_id %s",
-                len(records), len(lines), record.record_id,
+                "[_parse_response] 编号 %d 无对应译文 record_id %s",
+                idx, record.record_id,
             )
             result[record.record_id] = record.text
 

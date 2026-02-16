@@ -16,7 +16,8 @@ translator = Translator()
 
 def create_app() -> Flask:
     """创建并配置 Flask 应用。"""
-    logging.basicConfig(level=logging.INFO)
+    log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.WARNING))
     app = Flask(__name__)
 
     @app.post("/engine/translate")

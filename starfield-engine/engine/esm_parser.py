@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
+import zlib
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -17,6 +18,9 @@ RECORD_HEADER_SIZE = 24
 
 # GRUP 头部大小：type(4) + group_size(4) + label(4) + group_type(4) + stamp(4) + unknown(4)
 GRUP_HEADER_SIZE = 24
+
+# 记录压缩标志位（flags 字段的 bit 18）
+COMPRESSED_FLAG = 0x00040000
 
 # 子记录头部大小：type(4) + data_size(2)
 SUBRECORD_HEADER_SIZE = 6
@@ -135,6 +139,7 @@ def _parse_records(data: bytes, offset: int, end: int) -> tuple[list[StringRecor
                 break
 
             data_size = struct.unpack_from("<I", data, offset + 4)[0]
+            flags = struct.unpack_from("<I", data, offset + 8)[0]
             form_id = struct.unpack_from("<I", data, offset + 12)[0]
 
             record_data_start = offset + RECORD_HEADER_SIZE
@@ -147,11 +152,31 @@ def _parse_records(data: bytes, offset: int, end: int) -> tuple[list[StringRecor
                 )
                 break
 
+            record_data = data[record_data_start:record_data_end]
+
+            # 处理压缩记录
+            if flags & COMPRESSED_FLAG:
+                if len(record_data) < 4:
+                    logger.warning(
+                        "[_parse_records] 压缩记录数据不足 rec_type %s form_id %08X offset %d",
+                        rec_type.decode("ascii", errors="replace"), form_id, offset,
+                    )
+                    offset = record_data_end
+                    continue
+                decompressed_size = struct.unpack_from("<I", record_data, 0)[0]
+                try:
+                    record_data = zlib.decompress(record_data[4:], bufsize=decompressed_size)
+                except zlib.error:
+                    logger.warning(
+                        "[_parse_records] zlib 解压失败 rec_type %s form_id %08X offset %d",
+                        rec_type.decode("ascii", errors="replace"), form_id, offset,
+                    )
+                    offset = record_data_end
+                    continue
+
             # 解析子记录提取可翻译文本
             try:
-                sub_records = _parse_subrecords(
-                    data[record_data_start:record_data_end], rec_type, form_id
-                )
+                sub_records = _parse_subrecords(record_data, rec_type, form_id)
                 records.extend(sub_records)
             except Exception:
                 logger.warning(

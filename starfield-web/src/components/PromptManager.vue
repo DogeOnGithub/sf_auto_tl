@@ -106,6 +106,37 @@ onMounted(loadPrompts)
       <el-button type="primary" :icon="Plus" @click="openCreateDialog">新建 Prompt</el-button>
     </div>
 
+    <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+      <template #title>
+        <span style="font-weight: 600">Prompt 拼装规则</span>
+      </template>
+      <div class="prompt-help">
+        <p>翻译时的完整 Prompt 由以下部分按顺序拼装：</p>
+        <ol>
+          <li><b>基础指令</b>：使用自定义 Prompt（如已选择），否则使用默认 Prompt</li>
+          <li><b>词典约束</b>：如果配置了词典词条，会追加「以下词条必须保持指定翻译」段落</li>
+          <li><b>待翻译文本</b>：自动编号，格式为 <code>[1] 原文1</code> <code>[2] 原文2</code> ...，LLM 需按相同编号格式返回译文</li>
+        </ol>
+        <el-collapse>
+          <el-collapse-item title="查看默认 Prompt 完整内容">
+            <pre class="default-prompt">你是一个专业的游戏本地化翻译专家。请将以下游戏 Mod 文本翻译为简体中文。
+
+严格规则（必须遵守）：
+1. 输入格式为编号行 [1] 原文1 [2] 原文2 ...，输出必须严格按相同编号格式 [1] 译文1 [2] 译文2 ...
+2. 输出行数必须与输入行数完全一致，不得合并、拆分或遗漏任何一行
+3. 每行只输出 [编号] 译文，不要添加任何解释、注释或额外内容
+4. &lt;&gt; 包裹的标签是占位符，必须原样保留不翻译，例如 &lt;alias&gt; &lt;br&gt; &lt;Global=SQ_Companions01&gt;
+
+翻译要求：
+1. 保持游戏术语的一致性和准确性
+2. 翻译应自然流畅，符合中文游戏玩家的阅读习惯
+3. 保留原文中的格式标记、变量占位符和特殊符号不做翻译
+4. 对于专有名词，如无明确译法则保留原文</pre>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+    </el-alert>
+
     <el-table :data="prompts" v-loading="loading" border stripe style="width: 100%">
       <el-table-column prop="name" label="名称" min-width="140" />
       <el-table-column label="内容摘要" min-width="240">
@@ -150,5 +181,30 @@ onMounted(loadPrompts)
 .content-summary {
   color: var(--el-text-color-regular);
   font-size: 13px;
+}
+
+.prompt-help p {
+  margin: 4px 0 8px;
+}
+
+.prompt-help ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.prompt-help ol li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+
+.default-prompt {
+  background: var(--el-fill-color-light);
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
 }
 </style>

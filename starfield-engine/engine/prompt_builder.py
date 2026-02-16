@@ -9,12 +9,18 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PROMPT = (
     "你是一个专业的游戏本地化翻译专家。请将以下游戏 Mod 文本翻译为简体中文。\n"
+    "\n"
+    "严格规则（必须遵守）：\n"
+    "1. 输入格式为编号行 [1] 原文1 [2] 原文2 ...，输出必须严格按相同编号格式 [1] 译文1 [2] 译文2 ...\n"
+    "2. 输出行数必须与输入行数完全一致，不得合并、拆分或遗漏任何一行\n"
+    "3. 每行只输出 [编号] 译文，不要添加任何解释、注释或额外内容\n"
+    "4. <> 包裹的标签是占位符，必须原样保留不翻译，例如 <alias> <br> <Global=SQ_Companions01>\n"
+    "\n"
     "翻译要求：\n"
     "1. 保持游戏术语的一致性和准确性\n"
     "2. 翻译应自然流畅，符合中文游戏玩家的阅读习惯\n"
     "3. 保留原文中的格式标记、变量占位符和特殊符号不做翻译\n"
-    "4. 对于专有名词，如无明确译法则保留原文\n"
-    "5. 每行输出对应一行输入，保持行数一致"
+    "4. 对于专有名词，如无明确译法则保留原文"
 )
 
 DICTIONARY_SECTION_HEADER = "以下词条必须保持指定翻译：\n"
@@ -66,8 +72,9 @@ def build_prompt(
         if len(dict_lines) > 1:
             parts.append("\n".join(dict_lines))
 
-    # 3. 待翻译文本
-    text_section = TEXT_SECTION_HEADER + "\n".join(texts_to_translate)
+    # 3. 待翻译文本（编号格式）
+    numbered_lines = [f"[{i + 1}] {text}" for i, text in enumerate(texts_to_translate)]
+    text_section = TEXT_SECTION_HEADER + "\n".join(numbered_lines)
     parts.append(text_section)
 
     prompt = "\n\n".join(parts)
