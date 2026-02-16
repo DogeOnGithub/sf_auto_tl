@@ -168,9 +168,10 @@ class TestTranslatorParameterPassing:
                 break
             time.sleep(0.05)
 
-        mock_translate.assert_called_once_with(
-            records=records,
-            target_lang="ja-JP",
-            custom_prompt=custom,
-            dictionary_entries=entries,
-        )
+        mock_translate.assert_called_once()
+        call_kwargs = mock_translate.call_args.kwargs
+        assert call_kwargs["records"] == records
+        assert call_kwargs["target_lang"] == "ja-JP"
+        assert call_kwargs["custom_prompt"] == custom
+        assert call_kwargs["dictionary_entries"] == entries
+        assert callable(call_kwargs["on_batch_done"])

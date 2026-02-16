@@ -34,6 +34,7 @@ def create_app() -> Flask:
         target_lang = data.get("targetLang", "zh-CN")
         custom_prompt = data.get("customPrompt")
         dictionary_entries = data.get("dictionaryEntries")
+        callback_url = data.get("callbackUrl")
 
         logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s", task_id, file_path)
 
@@ -43,6 +44,7 @@ def create_app() -> Flask:
             target_lang=target_lang,
             custom_prompt=custom_prompt,
             dictionary_entries=dictionary_entries,
+            callback_url=callback_url,
         )
         return jsonify(result), 202
 

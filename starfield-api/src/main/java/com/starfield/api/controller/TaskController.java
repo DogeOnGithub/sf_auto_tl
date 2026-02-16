@@ -1,14 +1,12 @@
 package com.starfield.api.controller;
 
+import com.starfield.api.dto.ProgressCallbackRequest;
 import com.starfield.api.dto.TaskResponse;
 import com.starfield.api.service.TaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * 任务管理控制器
@@ -45,5 +43,21 @@ public class TaskController {
         var tasks = taskService.listTasks();
         return ResponseEntity.ok(tasks);
     }
+
+    /**
+     * 接收 Engine 的进度回调
+     *
+     * @param taskId  任务 ID
+     * @param request 进度回调请求
+     * @return 200 OK
+     */
+    @PostMapping("/{taskId}/progress")
+    public ResponseEntity<Void> receiveProgress(@PathVariable String taskId,
+                                                @RequestBody ProgressCallbackRequest request) {
+        log.info("[receiveProgress] 收到进度回调 taskId {}", taskId);
+        taskService.handleProgressCallback(taskId, request);
+        return ResponseEntity.ok().build();
+    }
+
 
 }

@@ -38,6 +38,9 @@ public class FileUploadService {
     @Value("${storage.upload-dir:./uploads}")
     private String uploadDir;
 
+    @Value("${api.base-url:http://localhost:8080}")
+    private String apiBaseUrl;
+
     private static final String ESM_EXTENSION = ".esm";
     private static final byte[] ESM_MAGIC_BYTES = "TES4".getBytes();
 
@@ -186,12 +189,14 @@ public class FileUploadService {
                     .toList();
 
             var absoluteFilePath = Paths.get(task.getFilePath()).toAbsolutePath().toString();
+            var callbackUrl = apiBaseUrl + "/api/tasks/" + task.getTaskId() + "/progress";
             var request = new EngineClient.EngineTranslateRequest(
                     task.getTaskId(),
                     absoluteFilePath,
                     task.getTargetLang(),
                     customPrompt,
-                    dictionaryEntries
+                    dictionaryEntries,
+                    callbackUrl
             );
 
             engineClient.submitTranslation(request);

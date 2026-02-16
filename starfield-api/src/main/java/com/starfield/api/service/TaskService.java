@@ -2,6 +2,7 @@ package com.starfield.api.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.starfield.api.client.EngineClient;
+import com.starfield.api.dto.ProgressCallbackRequest;
 import com.starfield.api.dto.TaskResponse;
 import com.starfield.api.entity.Creation;
 import com.starfield.api.entity.CreationVersion;
@@ -45,6 +46,9 @@ public class TaskService {
      * @param taskId 任务 ID
      * @return 任务响应 DTO
      */
+    /**
+     * 查询任务状态，直接返回数据库中的状态
+     */
     public TaskResponse getTask(String taskId) {
         log.info("[getTask] 查询任务 taskId {}", taskId);
 
@@ -53,8 +57,6 @@ public class TaskService {
             log.warn("[getTask] 任务不存在 taskId {}", taskId);
             throw new TaskNotFoundException(taskId);
         }
-
-        syncProgressFromEngine(task);
 
         return toResponse(task);
     }
@@ -101,6 +103,63 @@ public class TaskService {
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
+
+    /**
+     * 处理 Engine 的进度回调 更新数据库中的任务状态和进度
+     *
+     * @param taskId  任务 ID
+     * @param request 进度回调请求
+     */
+    public void handleProgressCallback(String taskId, ProgressCallbackRequest request) {
+        log.info("[handleProgressCallback] 收到回调 taskId {} status {}", taskId, request.status());
+
+        var task = translationTaskRepository.selectById(taskId);
+        if (Objects.isNull(task)) {
+            log.warn("[handleProgressCallback] 任务不存在 taskId {}", taskId);
+            return;
+        }
+
+        var currentStatus = task.getStatus();
+        if (currentStatus == TaskStatus.completed || currentStatus == TaskStatus.failed) {
+            log.info("[handleProgressCallback] 任务已终态 跳过 taskId {} status {}", taskId, currentStatus);
+            return;
+        }
+
+        var newStatus = TaskStatus.valueOf(request.status());
+        if (newStatus != task.getStatus()) {
+            log.info("[handleProgressCallback] 状态变更 taskId {} {} -> {}", taskId, task.getStatus(), newStatus);
+            task.setStatus(newStatus);
+        }
+
+        if (Objects.nonNull(request.progress())) {
+            task.setTranslatedCount(request.progress().translated());
+            task.setTotalCount(request.progress().total());
+        }
+
+        if (Objects.nonNull(request.outputFilePath())) {
+            task.setOutputFilePath(request.outputFilePath());
+        }
+
+        if (Objects.nonNull(request.originalBackupPath())) {
+            task.setOriginalBackupPath(request.originalBackupPath());
+        }
+
+        if (Objects.nonNull(request.error())) {
+            task.setErrorMessage(request.error());
+        }
+
+        // 终态处理
+        if (newStatus == TaskStatus.completed && Objects.isNull(task.getDownloadUrl())) {
+            handleTaskCompleted(task);
+        } else if (newStatus == TaskStatus.failed) {
+            handleTaskFailed(task);
+        }
+
+        // 回调成功 重置失败计数
+        task.setSyncFailCount(0);
+        translationTaskRepository.updateById(task);
+    }
+
 
     /**
      * 转换任务实体为响应 DTO（含 creation 信息）
@@ -151,7 +210,18 @@ public class TaskService {
         );
     }
 
-    private static final int MAX_SYNC_FAIL_COUNT = 100;
+    /**
+     * 查询所有非终态活跃任务 逐个向 Engine 同步进度（安全网）
+     */
+    public void syncActiveTasksFromEngine() {
+        var wrapper = new QueryWrapper<TranslationTask>()
+                .notIn("status", TaskStatus.completed.name(), TaskStatus.failed.name());
+        var activeTasks = translationTaskRepository.selectList(wrapper);
+        log.info("[syncActiveTasksFromEngine] 活跃任务数 {}", activeTasks.size());
+        activeTasks.forEach(this::syncProgressFromEngine);
+    }
+
+    private static final int MAX_SYNC_FAIL_COUNT = 10;
 
     /**
      * 尝试从翻译引擎同步最新进度，引擎不可用时使用数据库状态

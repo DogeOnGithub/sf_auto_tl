@@ -53,6 +53,7 @@ class FileUploadServiceTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(fileUploadService, "uploadDir", tempDir.toString());
+        ReflectionTestUtils.setField(fileUploadService, "apiBaseUrl", "http://localhost:8080");
     }
 
     /** 有效 ESM 文件上传（默认 Prompt）应返回 taskId 和 fileName */

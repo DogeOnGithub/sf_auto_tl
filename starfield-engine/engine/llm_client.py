@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from openai import OpenAI
 
@@ -134,6 +134,7 @@ def translate_records(
     custom_prompt: str | None = None,
     dictionary_entries: list[dict] | None = None,
     batch_size: int = 20,
+    on_batch_done: Callable[[int], None] | None = None,
 ) -> dict[str, str]:
     """批量翻译 StringRecord 列表。
 
@@ -146,6 +147,7 @@ def translate_records(
         custom_prompt: 用户自定义 Prompt，None 时使用默认模板。
         dictionary_entries: 词典词条列表。
         batch_size: 每批翻译的记录数，默认 20。
+        on_batch_done: 每完成一个 Batch 后的回调函数，参数为当前已翻译总数。
 
     Returns:
         record_id -> translated_text 的映射字典。
@@ -184,6 +186,9 @@ def translate_records(
             dictionary_entries=dictionary_entries,
         )
         all_translations.update(batch_result)
+
+        if on_batch_done is not None:
+            on_batch_done(len(all_translations))
 
     logger.info(
         "[translate_records] 翻译完成 total %d translated %d",

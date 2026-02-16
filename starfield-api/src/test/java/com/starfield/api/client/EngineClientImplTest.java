@@ -34,7 +34,7 @@ class EngineClientImplTest {
     @Test
     void submitTranslation_success() {
         var request = new EngineClient.EngineTranslateRequest(
-                "task-1", "/path/to/file.esm", "zh-CN", null, List.of()
+                "task-1", "/path/to/file.esm", "zh-CN", null, List.of(), null
         );
         var expected = new EngineClient.EngineTranslateResponse("task-1", "accepted");
         when(restTemplate.postForObject(
@@ -53,7 +53,7 @@ class EngineClientImplTest {
                 new EngineClient.DictionaryEntryDto("Sword", "剑")
         );
         var request = new EngineClient.EngineTranslateRequest(
-                "task-2", "/path/to/mod.esm", "zh-CN", "翻译为中文", entries
+                "task-2", "/path/to/mod.esm", "zh-CN", "翻译为中文", entries, null
         );
         var expected = new EngineClient.EngineTranslateResponse("task-2", "accepted");
         when(restTemplate.postForObject(
@@ -69,7 +69,7 @@ class EngineClientImplTest {
     @Test
     void submitTranslation_engineUnavailable_throwsException() {
         var request = new EngineClient.EngineTranslateRequest(
-                "task-3", "/path/to/file.esm", "zh-CN", null, List.of()
+                "task-3", "/path/to/file.esm", "zh-CN", null, List.of(), null
         );
         when(restTemplate.postForObject(
                 eq(BASE_URL + "/engine/translate"), any(), eq(EngineClient.EngineTranslateResponse.class)
@@ -83,7 +83,7 @@ class EngineClientImplTest {
     @Test
     void submitTranslation_unexpectedError_throwsException() {
         var request = new EngineClient.EngineTranslateRequest(
-                "task-4", "/path/to/file.esm", "zh-CN", null, List.of()
+                "task-4", "/path/to/file.esm", "zh-CN", null, List.of(), null
         );
         when(restTemplate.postForObject(
                 eq(BASE_URL + "/engine/translate"), any(), eq(EngineClient.EngineTranslateResponse.class)

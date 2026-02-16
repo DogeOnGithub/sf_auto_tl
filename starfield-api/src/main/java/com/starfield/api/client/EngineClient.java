@@ -33,7 +33,8 @@ public interface EngineClient {
             String filePath,
             String targetLang,
             String customPrompt,
-            List<DictionaryEntryDto> dictionaryEntries
+            List<DictionaryEntryDto> dictionaryEntries,
+            String callbackUrl
     ) {}
 
     record DictionaryEntryDto(
