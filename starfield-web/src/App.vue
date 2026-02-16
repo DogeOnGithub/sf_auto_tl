@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Reading, Setting, Collection, Clock, Folder } from '@element-plus/icons-vue'
+import { Reading, Setting, Collection, Clock, Folder, Memo } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
 import PromptManager from '@/components/PromptManager.vue'
 import DictionaryManager from '@/components/DictionaryManager.vue'
 import CreationManager from '@/components/CreationManager.vue'
+import CacheManager from '@/components/CacheManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
 import type { FileUploadResponse } from '@/types'
 
@@ -74,6 +75,10 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <el-icon><Clock /></el-icon>
           <span>翻译历史</span>
         </el-menu-item>
+        <el-menu-item index="cache">
+          <el-icon><Memo /></el-icon>
+          <span>翻译缓存</span>
+        </el-menu-item>
         <el-menu-item index="prompt">
           <el-icon><Setting /></el-icon>
           <span>Prompt 管理</span>
@@ -115,6 +120,11 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         <div v-show="activeMenu === 'creations'" class="page-content" style="max-width: none">
           <h2 class="page-title">Creations</h2>
           <CreationManager :is-starborn="isStarborn" />
+        </div>
+
+        <div v-show="activeMenu === 'cache'" class="page-content">
+          <h2 class="page-title">翻译缓存</h2>
+          <CacheManager />
         </div>
       </el-main>
     </el-container>

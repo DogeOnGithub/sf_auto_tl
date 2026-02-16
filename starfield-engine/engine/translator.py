@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from engine.cache_client import query_cache, save_cache
 from engine.esm_parser import parse_esm
 from engine.esm_writer import write_esm
 from engine.llm_client import translate_records
@@ -132,7 +133,7 @@ class Translator:
         dictionary_entries: Optional[List[Dict]],
         callback_url: str | None = None,
     ) -> None:
-        """执行翻译任务的完整流程：解析 → 翻译 → 重组。"""
+        """执行翻译任务的完整流程：解析 → 缓存查询 → 翻译 → 缓存保存 → 重组。"""
         try:
             # 1. 解析 ESM
             self._update_status(task_id, STATUS_PARSING)
@@ -148,26 +149,49 @@ class Translator:
                 self._report_progress(task_id, callback_url)
                 return
 
-            # 2. 翻译
+            # 2. 查询缓存
+            cached = query_cache(records, target_lang)
+            cached_count = len(cached)
+            logger.info("[_run_task] 缓存查询完成 task_id %s cached %d total %d", task_id, cached_count, total)
+
+            # 过滤出未命中缓存的词条
+            uncached_records = [r for r in records if r.record_id not in cached]
+
+            # 缓存命中的词条计入已翻译进度
+            self._update_progress(task_id, cached_count, total)
+
+            # 3. 翻译未命中词条
             self._update_status(task_id, STATUS_TRANSLATING)
             self._report_progress(task_id, callback_url)
-            logger.info("[_run_task] 开始翻译 task_id %s records_count %d", task_id, total)
 
-            def on_batch_done(translated_count: int) -> None:
-                """每批翻译完成后更新进度并上报。"""
-                self._update_progress(task_id, translated_count, total)
-                self._report_progress(task_id, callback_url)
+            if uncached_records:
+                logger.info("[_run_task] 开始翻译 task_id %s uncached_count %d", task_id, len(uncached_records))
 
-            translations = translate_records(
-                records=records,
-                target_lang=target_lang,
-                custom_prompt=custom_prompt,
-                dictionary_entries=dictionary_entries,
-                on_batch_done=on_batch_done,
-            )
+                def on_batch_done(translated_count: int) -> None:
+                    """每批翻译完成后更新进度并上报（加上缓存命中数）。"""
+                    self._update_progress(task_id, cached_count + translated_count, total)
+                    self._report_progress(task_id, callback_url)
+
+                new_translations = translate_records(
+                    records=uncached_records,
+                    target_lang=target_lang,
+                    custom_prompt=custom_prompt,
+                    dictionary_entries=dictionary_entries,
+                    on_batch_done=on_batch_done,
+                )
+
+                # 4. 保存新翻译到缓存
+                if new_translations:
+                    save_cache(new_translations, uncached_records, target_lang, task_id)
+            else:
+                logger.info("[_run_task] 所有词条命中缓存 task_id %s", task_id)
+                new_translations = {}
+
+            # 5. 合并缓存结果和 LLM 结果
+            translations = {**cached, **new_translations}
             self._update_progress(task_id, len(translations), total)
 
-            # 3. 重组 ESM
+            # 6. 重组 ESM
             self._update_status(task_id, STATUS_ASSEMBLING)
             self._report_progress(task_id, callback_url)
             logger.info("[_run_task] 开始重组 task_id %s", task_id)

@@ -101,3 +101,21 @@ export interface CreationPageResponse {
   current: number
   pages: number
 }
+
+export interface CacheEntry {
+  id: number
+  taskId: string
+  subrecordType: string
+  sourceText: string
+  targetText: string
+  targetLang: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CachePageResponse {
+  records: CacheEntry[]
+  total: number
+  current: number
+  pages: number
+}
