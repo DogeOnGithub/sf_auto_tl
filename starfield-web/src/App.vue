@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { Reading, Setting, Collection, Clock, Folder } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
