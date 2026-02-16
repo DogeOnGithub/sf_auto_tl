@@ -6,6 +6,8 @@ import { createCreation, getCreations, getCreation, updateCreation, deleteCreati
 import { downloadFile } from '@/services/taskApi'
 import type { Creation, TaskResponse } from '@/types'
 
+const props = defineProps<{ isStarborn: boolean }>()
+
 const creations = ref<Creation[]>([])
 const total = ref(0)
 const currentPage = ref(1)
@@ -481,7 +483,7 @@ onMounted(() => {
         <el-form-item label="版本" required>
           <el-input v-model="form.version" placeholder="版本号（如 1.0）" />
         </el-form-item>
-        <el-form-item label="Mod 文件">
+        <el-form-item label="Mod 文件" v-if="props.isStarborn">
           <el-upload :auto-upload="false" :limit="1" :on-change="handleModFileChange" :show-file-list="true">
             <el-button>选择文件</el-button>
           </el-upload>
@@ -585,7 +587,7 @@ onMounted(() => {
                     <span class="patch-filename">{{ row.fileName }}</span>
                   </el-tooltip>
                   <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="openExternal(row.filePath)">下载</el-button>
-                  <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
+                  <el-upload v-if="props.isStarborn" :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
                     <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null">{{ row.filePath ? '替换' : '上传' }}</el-button>
                   </el-upload>
                 </div>
@@ -621,7 +623,7 @@ onMounted(() => {
             <el-table-column label="上传时间" width="160">
               <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="70" align="center">
+            <el-table-column v-if="props.isStarborn" label="操作" width="70" align="center">
               <template #default="{ row }">
                 <el-button text type="danger" size="small" @click.stop="handleDeleteVersion(row.id)">删除</el-button>
               </template>
@@ -666,7 +668,7 @@ onMounted(() => {
           <p class="detail-remark">{{ selectedCreation.remark }}</p>
         </div>
 
-        <div class="detail-actions">
+        <div v-if="props.isStarborn" class="detail-actions">
           <el-button type="danger" :icon="Delete" @click="handleDelete(selectedCreation.id)">不再分享</el-button>
         </div>
       </template>

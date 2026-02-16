@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Reading, Setting, Collection, Clock, Folder } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
@@ -7,10 +8,39 @@ import TaskHistory from '@/components/TaskHistory.vue'
 import PromptManager from '@/components/PromptManager.vue'
 import DictionaryManager from '@/components/DictionaryManager.vue'
 import CreationManager from '@/components/CreationManager.vue'
+import { useStarborn } from '@/composables/useStarborn'
 import type { FileUploadResponse } from '@/types'
 
 const taskListRef = ref<InstanceType<typeof TaskList>>()
 const activeMenu = ref('translate')
+const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
+
+/** Unity 彩蛋：连续点击 logo 切换星裔权限（激活 10 次，退出 3 次） */
+const clickCount = ref(0)
+let clickTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleLogoClick() {
+  clickCount.value++
+  if (clickTimer) clearTimeout(clickTimer)
+  clickTimer = setTimeout(() => { clickCount.value = 0 }, 2000)
+  const threshold = isStarborn.value ? 3 : 10
+  if (clickCount.value >= threshold) {
+    clickCount.value = 0
+    if (isStarborn.value) {
+      deactivateStarborn()
+      ElMessageBox.alert('新的开始', 'Unity', {
+        confirmButtonText: '确认',
+        type: 'info',
+      })
+    } else {
+      activateStarborn()
+      ElMessageBox.alert('你已归一，星裔', 'Unity', {
+        confirmButtonText: '确认',
+        type: 'success',
+      })
+    }
+  }
+}
 
 /** 文件上传成功回调 */
 function handleUploadSuccess(payload: FileUploadResponse) {
@@ -26,6 +56,8 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           src="/logo.png"
           alt="Starfield Logo"
           class="logo-img"
+          @click="handleLogoClick"
+          style="cursor: pointer; user-select: none;"
         />
         <p class="logo-sub">Mod 翻译工具</p>
       </div>
@@ -82,7 +114,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 
         <div v-show="activeMenu === 'creations'" class="page-content" style="max-width: none">
           <h2 class="page-title">Creations</h2>
-          <CreationManager />
+          <CreationManager :is-starborn="isStarborn" />
         </div>
       </el-main>
     </el-container>
