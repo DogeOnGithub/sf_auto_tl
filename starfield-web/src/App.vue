@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { Reading, Setting, Collection, Clock, Folder, Memo } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
@@ -12,9 +12,31 @@ import CacheManager from '@/components/CacheManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
 import type { FileUploadResponse } from '@/types'
 
+const VALID_MENUS = ['translate', 'history', 'cache', 'prompt', 'dictionary', 'creations']
+
+/** 从 hash 读取当前菜单 */
+function getMenuFromHash(): string {
+  var hash = location.hash.replace('#/', '').replace('#', '')
+  return VALID_MENUS.includes(hash) ? hash : 'translate'
+}
+
 const taskListRef = ref<InstanceType<typeof TaskList>>()
-const activeMenu = ref('translate')
+const activeMenu = ref(getMenuFromHash())
 const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
+
+/** 菜单切换时同步 hash */
+function handleMenuSelect(index: string) {
+  activeMenu.value = index
+  location.hash = '#/' + index
+}
+
+/** 监听浏览器前进后退 */
+function onHashChange() {
+  activeMenu.value = getMenuFromHash()
+}
+
+onMounted(() => window.addEventListener('hashchange', onHashChange))
+onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 
 /** Unity 彩蛋：连续点击 logo 切换星裔权限（激活 10 次，退出 3 次） */
 const clickCount = ref(0)
@@ -64,7 +86,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
       </div>
       <el-menu
         :default-active="activeMenu"
-        @select="(index: string) => activeMenu = index"
+        @select="handleMenuSelect"
         class="side-menu"
       >
         <el-menu-item index="translate">
@@ -166,7 +188,6 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 }
 
 .app-main {
-  max-width: 960px;
   padding: 24px 32px;
   background: var(--el-bg-color-page);
 }
@@ -179,6 +200,6 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 }
 
 .page-content {
-  max-width: 800px;
+  max-width: 960px;
 }
 </style>
