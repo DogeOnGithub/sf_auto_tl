@@ -67,7 +67,7 @@ const versionForm = ref({
 const versionModFile = ref<File | null>(null)
 
 /** 预设标签列表 */
-const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园']
+const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园', '飞船']
 
 /** 格式化时间 */
 function formatTime(dateStr: string): string {
