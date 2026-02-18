@@ -119,6 +119,26 @@ function handleImageRemove(_uploadFile: any, uploadFiles: any[]) {
   imageFiles.value = uploadFiles.map((f: any) => f.raw)
 }
 
+/** 图片上传组件 ref */
+const imageUploadRef = ref<any>(null)
+
+/** 处理粘贴图片 */
+function handlePasteImage(e: ClipboardEvent) {
+  var items = e.clipboardData?.items
+  if (!items) return
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type.startsWith('image/')) {
+      e.preventDefault()
+      var file = items[i].getAsFile()
+      if (!file) continue
+      var ext = file.type.split('/')[1] || 'png'
+      var namedFile = new File([file], `paste-${Date.now()}.${ext}`, { type: file.type })
+      imageUploadRef.value?.handleStart(namedFile)
+      break
+    }
+  }
+}
+
 /** 提交创建 */
 async function handleSubmit() {
   if (!form.value.name.trim()) {
@@ -492,9 +512,12 @@ onMounted(() => {
           </el-upload>
         </el-form-item>
         <el-form-item label="图片">
-          <el-upload :auto-upload="false" list-type="picture-card" :on-change="handleImageChange" :on-remove="handleImageRemove" accept="image/*" multiple>
-            <el-icon><Plus /></el-icon>
-          </el-upload>
+          <div @paste="handlePasteImage" tabindex="0" class="image-upload-paste-zone">
+            <el-upload ref="imageUploadRef" :auto-upload="false" list-type="picture-card" :on-change="handleImageChange" :on-remove="handleImageRemove" accept="image/*" multiple>
+              <el-icon><Plus /></el-icon>
+            </el-upload>
+            <div class="paste-hint">支持 Ctrl+V 粘贴图片</div>
+          </div>
         </el-form-item>
         <el-form-item label="分享链接">
           <el-input v-model="form.fileShareLink" placeholder="文件分享链接" />
@@ -731,4 +754,7 @@ onMounted(() => {
 .detail-remark { margin: 0; font-size: 13px; color: var(--el-text-color-regular); white-space: pre-wrap; }
 .detail-actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--el-border-color-lighter); }
 .patch-filename { font-size: 12px; color: var(--el-text-color-regular); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-upload-paste-zone { outline: none; border: 1px dashed transparent; border-radius: 6px; padding: 4px; transition: border-color 0.2s; }
+.image-upload-paste-zone:focus { border-color: var(--el-color-primary); }
+.paste-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 4px; }
 </style>
