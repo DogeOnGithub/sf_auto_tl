@@ -22,4 +22,12 @@ public class TaskProgressScheduler {
     public void syncActiveTasks() {
         taskService.syncActiveTasksFromEngine();
     }
+
+    /**
+     * 每小时检查 uploads 目录大小 超过 20GB 时清理已完成和已失败任务的文件
+     */
+    @Scheduled(fixedDelay = 3600000)
+    public void cleanupUploads() {
+        taskService.cleanupUploadsIfOversized();
+    }
 }

@@ -14,14 +14,17 @@ import com.starfield.api.repository.CustomPromptRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -39,6 +42,12 @@ public class TaskService {
     final CustomPromptRepository customPromptRepository;
     final EngineClient engineClient;
     final CosService cosService;
+
+    @Value("${storage.upload-dir:./uploads}")
+    private String uploadDir;
+
+    /** uploads 目录大小阈值 20GB */
+    private static final long UPLOAD_DIR_SIZE_THRESHOLD = 20L * 1024 * 1024 * 1024;
 
     /**
      * 查询翻译任务状态和进度，尝试从引擎同步最新进度
@@ -430,6 +439,101 @@ public class TaskService {
             return fileName.substring(0, fileName.length() - 4) + ".zip";
         }
         return fileName + ".zip";
+    }
+
+    /**
+     * 定时清理 uploads 目录中的孤立文件
+     * 仅当目录总大小超过 20GB 时触发清理
+     * 清理范围：已完成（有下载链接）或已失败的任务关联文件
+     */
+    public void cleanupUploadsIfOversized() {
+        var uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) {
+            return;
+        }
+
+        try {
+            var totalSize = calculateDirectorySize(uploadPath);
+            var totalSizeMB = totalSize / (1024 * 1024);
+            log.info("[cleanupUploadsIfOversized] uploads 目录大小 {}MB 阈值 {}MB", totalSizeMB, UPLOAD_DIR_SIZE_THRESHOLD / (1024 * 1024));
+
+            if (totalSize < UPLOAD_DIR_SIZE_THRESHOLD) {
+                return;
+            }
+
+            log.info("[cleanupUploadsIfOversized] 超过阈值 开始清理");
+
+            // 查询已完成且有下载链接的任务
+            var completedWrapper = new QueryWrapper<TranslationTask>()
+                    .eq("status", TaskStatus.completed.name())
+                    .isNotNull("download_url");
+            var completedTasks = translationTaskRepository.selectList(completedWrapper);
+
+            // 查询已失败的任务
+            var failedWrapper = new QueryWrapper<TranslationTask>()
+                    .eq("status", TaskStatus.failed.name());
+            var failedTasks = translationTaskRepository.selectList(failedWrapper);
+
+            var cleanedCount = 0;
+
+            for (var task : completedTasks) {
+                cleanedCount += cleanupTaskFiles(task);
+            }
+
+            for (var task : failedTasks) {
+                cleanedCount += cleanupTaskFiles(task);
+            }
+
+            var newSize = calculateDirectorySize(uploadPath);
+            log.info("[cleanupUploadsIfOversized] 清理完成 删除文件数 {} 清理前 {}MB 清理后 {}MB",
+                    cleanedCount, totalSizeMB, newSize / (1024 * 1024));
+
+        } catch (Exception e) {
+            log.error("[cleanupUploadsIfOversized] 清理异常", e);
+        }
+    }
+
+    /**
+     * 清理单个任务关联的本地文件 返回删除的文件数
+     */
+    private int cleanupTaskFiles(TranslationTask task) {
+        var count = 0;
+        if (deleteFileIfExists(task.getFilePath())) count++;
+        if (deleteFileIfExists(task.getOutputFilePath())) count++;
+        if (deleteFileIfExists(task.getOriginalBackupPath())) count++;
+        return count;
+    }
+
+    /**
+     * 删除文件（如果存在） 返回是否成功删除
+     */
+    private boolean deleteFileIfExists(String filePath) {
+        if (Objects.isNull(filePath)) {
+            return false;
+        }
+        try {
+            return Files.deleteIfExists(Path.of(filePath));
+        } catch (IOException e) {
+            log.warn("[deleteFileIfExists] 文件删除失败 filePath {}", filePath, e);
+            return false;
+        }
+    }
+
+    /**
+     * 计算目录总大小（字节）
+     */
+    private long calculateDirectorySize(Path dir) throws IOException {
+        try (Stream<Path> walk = Files.walk(dir)) {
+            return walk.filter(Files::isRegularFile)
+                    .mapToLong(p -> {
+                        try {
+                            return Files.size(p);
+                        } catch (IOException e) {
+                            return 0L;
+                        }
+                    })
+                    .sum();
+        }
     }
 
     /**
