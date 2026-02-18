@@ -66,6 +66,9 @@ const versionForm = ref({
 })
 const versionModFile = ref<File | null>(null)
 
+/** 预设标签列表 */
+const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园']
+
 /** 格式化时间 */
 function formatTime(dateStr: string): string {
   if (!dateStr) return ''
@@ -121,6 +124,24 @@ function handleImageRemove(_uploadFile: any, uploadFiles: any[]) {
 
 /** 图片上传组件 ref */
 const imageUploadRef = ref<any>(null)
+
+/** 切换预设标签（适用于逗号分隔的 tags 字符串） */
+function togglePresetTag(obj: Record<string, any>, field: string, tag: string) {
+  var current = obj[field] ? obj[field].split(',').map((t: string) => t.trim()).filter(Boolean) : []
+  var idx = current.indexOf(tag)
+  if (idx >= 0) {
+    current.splice(idx, 1)
+  } else {
+    current.push(tag)
+  }
+  obj[field] = current.join(',')
+}
+
+/** 判断标签是否已选中 */
+function isTagSelected(tags: string, tag: string): boolean {
+  if (!tags) return false
+  return tags.split(',').map(t => t.trim()).includes(tag)
+}
 
 /** 处理粘贴图片 */
 function handlePasteImage(e: ClipboardEvent) {
@@ -523,7 +544,10 @@ onMounted(() => {
           <el-input v-model="form.fileShareLink" placeholder="文件分享链接" />
         </el-form-item>
         <el-form-item label="标签">
-          <el-input v-model="form.tags" placeholder="多个标签用逗号分隔" />
+          <div class="preset-tags">
+            <el-tag v-for="tag in presetTags" :key="tag" :type="isTagSelected(form.tags, tag) ? '' : 'info'" :effect="isTagSelected(form.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(form, 'tags', tag)">{{ tag }}</el-tag>
+          </div>
+          <el-input v-model="form.tags" placeholder="多个标签用逗号分隔" style="margin-top: 8px" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="备注信息" />
@@ -554,7 +578,10 @@ onMounted(() => {
           <el-input v-model="editForm.nexusLink" />
         </el-form-item>
         <el-form-item label="标签">
-          <el-input v-model="editForm.tags" placeholder="多个标签用逗号分隔" />
+          <div class="preset-tags">
+            <el-tag v-for="tag in presetTags" :key="tag" :type="isTagSelected(editForm.tags, tag) ? '' : 'info'" :effect="isTagSelected(editForm.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(editForm, 'tags', tag)">{{ tag }}</el-tag>
+          </div>
+          <el-input v-model="editForm.tags" placeholder="多个标签用逗号分隔" style="margin-top: 8px" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.remark" type="textarea" :rows="3" />
@@ -757,4 +784,6 @@ onMounted(() => {
 .image-upload-paste-zone { outline: none; border: 1px dashed transparent; border-radius: 6px; padding: 4px; transition: border-color 0.2s; }
 .image-upload-paste-zone:focus { border-color: var(--el-color-primary); }
 .paste-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 4px; }
+.preset-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.preset-tag { cursor: pointer; }
 </style>
