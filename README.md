@@ -11,11 +11,29 @@ starfield-web/      Vue 3 前端（Element Plus + TypeScript）
 docker-compose.yml  一键部署
 ```
 
+### 翻译引擎核心模块
+
+```
+starfield-engine/engine/
+  esm_parser.py     ESM 二进制文件解析，提取可翻译子记录
+  llm_client.py     LLM 批量翻译（标签遮蔽、多行解析、重试）
+  translator.py     翻译调度器（缓存查询、去重、分批翻译、进度上报）
+  cache_client.py   翻译缓存 HTTP 客户端
+  esm_writer.py     翻译结果回写 ESM 文件
+  prompt_builder.py Prompt 模板构建
+
+starfield-engine/tools/
+  scan_subrecords.py  ESM 子记录扫描工具（发现新的可翻译类型）
+```
+
 ## 功能特性
 
 - ESM 文件上传与自动翻译（支持自定义 Prompt 和术语词典）
 - 翻译任务管理（实时进度、历史记录、文件下载）
-- Mod 作品管理（多版本、图片、标签、CC/Nexus 链接）
+- 翻译缓存（自动匹配已有译文，避免重复翻译，支持按类型/子类型/任务ID查询）
+- ESM 解析器两层匹配（通用子记录类型 + 记录类型组合匹配，附带扫描工具发现新类型）
+- 翻译引擎优化（每批次实时缓存、相同文本去重翻译、多行译文解析）
+- Mod 作品管理（多版本、图片粘贴上传、预设标签、CC/Nexus 链接）
 - 翻译任务与作品版本关联
 - 汉化补丁上传与下载、Mod 文件替换
 - 腾讯云 COS 对象存储（文件、图片、补丁统一存储）
