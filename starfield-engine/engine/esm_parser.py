@@ -10,8 +10,22 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 包含可翻译文本的子记录类型
-TRANSLATABLE_SUBRECORD_TYPES = frozenset({b"FULL", b"DESC", b"NNAM", b"SHRT", b"TNAM", b"RNAM"})
+# 包含可翻译文本的子记录类型（任意记录类型下都翻译）
+TRANSLATABLE_SUBRECORD_TYPES = frozenset({b"FULL", b"DESC", b"NNAM", b"SHRT", b"RNAM"})
+
+# 需要按"记录类型 + 子记录类型"组合判断的可翻译条目
+# 格式: (record_type, subrecord_type)
+TRANSLATABLE_COMBINATIONS = frozenset({
+    (b"INFO", b"NAM1"),   # NPC 对话文本
+    (b"QUST", b"CNAM"),   # 任务日志描述
+    (b"QUST", b"NAM2"),   # 任务阶段文本
+    (b"TMLM", b"ITXT"),   # 终端菜单选项
+    (b"TMLM", b"BTXT"),   # 终端正文内容
+    (b"TMLM", b"UNAM"),   # 终端操作结果
+    (b"NPC_", b"LNAM"),   # NPC 所属组织名
+    (b"REFR", b"UNAM"),   # 地图标记名
+    (b"NPC_", b"ATTX"),   # 交互提示文本
+})
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
 RECORD_HEADER_SIZE = 24
@@ -59,7 +73,12 @@ def _is_printable_text(text: str) -> bool:
 
 
 def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[StringRecord]:
-    """解析记录内的子记录，提取可翻译文本。"""
+    """解析记录内的子记录，提取可翻译文本。
+
+    判断逻辑：
+    1. 子记录类型在 TRANSLATABLE_SUBRECORD_TYPES 中（任意记录类型下都翻译）
+    2. (记录类型, 子记录类型) 组合在 TRANSLATABLE_COMBINATIONS 中
+    """
     records = []
     offset = 0
 
@@ -82,7 +101,12 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
             )
             break
 
-        if sub_type in TRANSLATABLE_SUBRECORD_TYPES and sub_size > 0:
+        is_translatable = (
+            sub_type in TRANSLATABLE_SUBRECORD_TYPES
+            or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
+        )
+
+        if is_translatable and sub_size > 0:
             text = _decode_text(data[offset : offset + sub_size])
             if text and _is_printable_text(text):
                 record_id = _build_record_id(record_type, form_id, sub_type)
