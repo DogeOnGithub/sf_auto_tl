@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getCacheEntries, updateCacheEntry } from '@/services/cacheApi'
+import { getCacheEntries, updateCacheEntry, deleteCacheEntry, batchDeleteCacheEntries } from '@/services/cacheApi'
 import type { CacheEntry } from '@/types'
+
+const props = defineProps<{ isStarborn: boolean }>()
 
 const entries = ref<CacheEntry[]>([])
 const total = ref(0)
@@ -17,6 +19,32 @@ const dialogVisible = ref(false)
 const editingEntry = ref<CacheEntry | null>(null)
 const editingText = ref('')
 const submitting = ref(false)
+
+/** 批量选择状态 */
+const selectedEntries = ref<CacheEntry[]>([])
+
+function handleSelectionChange(rows: CacheEntry[]) {
+  selectedEntries.value = rows
+}
+
+/** 批量删除（仅星裔可用） */
+async function handleBatchDelete() {
+  var ids = selectedEntries.value.map(e => e.id)
+  try {
+    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 条缓存记录？`, '批量删除确认', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await batchDeleteCacheEntries(ids)
+    ElMessage.success(`成功删除 ${ids.length} 条记录`)
+    selectedEntries.value = []
+    loadEntries()
+  } catch (err: any) {
+    if (err === 'cancel') return
+    ElMessage.error('批量删除失败')
+  }
+}
 
 /** 格式化时间 */
 function formatTime(dateStr: string): string {
@@ -78,6 +106,23 @@ async function saveEdit() {
   }
 }
 
+/** 删除缓存记录（仅星裔可用） */
+async function handleDelete(entry: CacheEntry) {
+  try {
+    await ElMessageBox.confirm(`确定删除该缓存记录？\n原文：${entry.sourceText}`, '删除确认', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await deleteCacheEntry(entry.id)
+    ElMessage.success('删除成功')
+    loadEntries()
+  } catch (err: any) {
+    if (err === 'cancel') return
+    ElMessage.error('删除失败')
+  }
+}
+
 onMounted(() => {
   loadEntries()
 })
@@ -95,8 +140,10 @@ onMounted(() => {
         class="search-input"
       />
       <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+      <el-button v-if="props.isStarborn && selectedEntries.length > 0" type="danger" @click="handleBatchDelete">批量删除 ({{ selectedEntries.length }})</el-button>
     </div>
-    <el-table :data="entries" v-loading="loading" empty-text="暂无缓存记录">
+    <el-table :data="entries" v-loading="loading" empty-text="暂无缓存记录" @selection-change="handleSelectionChange">
+      <el-table-column v-if="props.isStarborn" type="selection" width="50" />
       <el-table-column prop="subrecordType" label="类型" width="120" />
       <el-table-column prop="sourceText" label="原文" min-width="200" show-overflow-tooltip />
       <el-table-column prop="targetText" label="译文" min-width="200" show-overflow-tooltip />
@@ -104,9 +151,10 @@ onMounted(() => {
       <el-table-column label="更新时间" width="160">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="80">
+      <el-table-column label="操作" :width="props.isStarborn ? 140 : 80">
         <template #default="{ row }">
           <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
+          <el-button v-if="props.isStarborn" size="small" type="danger" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

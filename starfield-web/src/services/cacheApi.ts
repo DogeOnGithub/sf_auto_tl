@@ -16,3 +16,13 @@ export function updateCacheEntry(id: number, targetText: string): Promise<CacheE
     .put<CacheEntry>(`/api/translation-cache/${id}`, { targetText })
     .then((res) => res.data)
 }
+
+/** 删除缓存记录 */
+export function deleteCacheEntry(id: number): Promise<void> {
+  return api.delete(`/api/translation-cache/${id}`).then(() => {})
+}
+
+/** 批量删除缓存记录 */
+export function batchDeleteCacheEntries(ids: number[]): Promise<void> {
+  return api.delete('/api/translation-cache/batch', { data: ids }).then(() => {})
+}

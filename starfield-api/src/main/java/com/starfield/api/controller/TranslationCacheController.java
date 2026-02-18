@@ -51,6 +51,30 @@ public class TranslationCacheController {
     }
 
     /**
+     * 删除缓存记录
+     *
+     * @param id 缓存记录 ID
+     * @return 204 No Content
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        translationCacheService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 批量删除缓存记录
+     *
+     * @param ids 缓存记录 ID 列表
+     * @return 204 No Content
+     */
+    @DeleteMapping("/batch")
+    public ResponseEntity<Void> batchDelete(@RequestBody java.util.List<Long> ids) {
+        translationCacheService.batchDelete(ids);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
      * 批量查询翻译缓存
      *
      * @param request 缓存查询请求

@@ -117,6 +117,9 @@ onMounted(loadPrompts)
           <li><b>词典约束</b>：如果配置了词典词条，会追加「以下词条必须保持指定翻译」段落</li>
           <li><b>待翻译文本</b>：自动编号，格式为 <code>[1] 原文1</code> <code>[2] 原文2</code> ...，LLM 需按相同编号格式返回译文</li>
         </ol>
+        <p style="margin: 8px 0 0; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.6">
+          💡 标签保护：原文中的 <code>&lt;...&gt;</code> 标签（如 <code>&lt;Alias=Player&gt;</code>、<code>&lt;Global=SQ_Companions01&gt;</code>）会在翻译前自动替换为占位符，翻译完成后还原，确保标签内容不被 LLM 修改。
+        </p>
         <el-collapse>
           <el-collapse-item title="查看默认 Prompt 完整内容">
             <pre class="default-prompt">你是一个专业的游戏本地化翻译专家。请将以下游戏 Mod 文本翻译为简体中文。

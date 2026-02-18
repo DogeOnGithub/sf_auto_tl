@@ -81,9 +81,10 @@ public class TranslationCacheService {
 
         var wrapper = new LambdaQueryWrapper<TranslationCache>().orderByDesc(TranslationCache::getUpdatedAt);
         if (Objects.nonNull(keyword) && !keyword.isBlank()) {
-            wrapper.and(w -> w.like(TranslationCache::getSourceText, keyword)
-                    .or().like(TranslationCache::getTargetText, keyword)
-                    .or().like(TranslationCache::getSubrecordType, keyword));
+            var kw = keyword.trim();
+            wrapper.and(w -> w.apply("source_text ILIKE {0}", "%" + kw + "%")
+                    .or().apply("target_text ILIKE {0}", "%" + kw + "%")
+                    .or().apply("subrecord_type ILIKE {0}", "%" + kw + "%"));
         }
 
         var pageResult = translationCacheRepository.selectPage(new Page<>(page, size), wrapper);
@@ -115,6 +116,32 @@ public class TranslationCacheService {
         return new CacheEntryResponse(cache.getId(), cache.getTaskId(), cache.getSubrecordType(),
                 cache.getSourceText(), cache.getTargetText(), cache.getTargetLang(),
                 cache.getCreatedAt(), cache.getUpdatedAt());
+    }
+
+    /**
+     * 删除缓存记录
+     *
+     * @param id 缓存记录 ID
+     */
+    public void delete(Long id) {
+        log.info("[delete] 删除缓存 id {}", id);
+        var cache = translationCacheRepository.selectById(id);
+        if (Objects.isNull(cache)) {
+            throw new RuntimeException("缓存记录不存在 id " + id);
+        }
+        translationCacheRepository.deleteById(id);
+        log.info("[delete] 缓存删除成功 id {}", id);
+    }
+
+    /**
+     * 批量删除缓存记录
+     *
+     * @param ids 缓存记录 ID 列表
+     */
+    public void batchDelete(List<Long> ids) {
+        log.info("[batchDelete] 批量删除缓存 count {}", ids.size());
+        translationCacheRepository.deleteBatchIds(ids);
+        log.info("[batchDelete] 批量删除完成 count {}", ids.size());
     }
 
     /**

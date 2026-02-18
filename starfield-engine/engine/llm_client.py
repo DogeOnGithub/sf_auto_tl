@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Callable, Dict, List, Optional, Union
 
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
 
+# 匹配 <...> 标签的正则
+_TAG_PATTERN = re.compile(r"<[^>]+>")
+
 
 def _get_client() -> OpenAI:
     """创建 OpenAI 客户端，从环境变量读取配置。"""
@@ -30,6 +34,23 @@ def _get_client() -> OpenAI:
 def _get_model() -> str:
     """获取 LLM 模型名称，默认 deepseek-reasoner。"""
     return os.environ.get("LLM_MODEL", "deepseek-reasoner")
+
+
+def _mask_tags(text: str) -> tuple[str, list[str]]:
+    """将文本中的 <...> 标签替换为占位符 {{TAG_0}} {{TAG_1}} 等，返回替换后文本和标签列表。"""
+    tags = _TAG_PATTERN.findall(text)
+    masked = text
+    for i, tag in enumerate(tags):
+        masked = masked.replace(tag, f"{{{{TAG_{i}}}}}", 1)
+    return masked, tags
+
+
+def _unmask_tags(text: str, tags: list[str]) -> str:
+    """将占位符 {{TAG_0}} 等还原为原始 <...> 标签。"""
+    result = text
+    for i, tag in enumerate(tags):
+        result = result.replace(f"{{{{TAG_{i}}}}}", tag)
+    return result
 
 
 def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str, str]:
@@ -105,8 +126,17 @@ def _translate_batch(
         无异常抛出，失败时返回空字典并记录错误日志。
     """
     texts = [r.text for r in records]
+
+    # 遮蔽 <...> 标签，防止 LLM 翻译标签内容
+    masked_texts = []
+    tags_map = []  # 每条文本对应的标签列表
+    for text in texts:
+        masked, tags = _mask_tags(text)
+        masked_texts.append(masked)
+        tags_map.append(tags)
+
     prompt = build_prompt(
-        texts_to_translate=texts,
+        texts_to_translate=masked_texts,
         custom_prompt=custom_prompt,
         dictionary_entries=dictionary_entries,
     )
@@ -123,7 +153,12 @@ def _translate_batch(
                 ],
             )
             response_text = response.choices[0].message.content or ""
-            return _parse_response(response_text, records)
+            result = _parse_response(response_text, records)
+            # 还原标签占位符
+            for i, record in enumerate(records):
+                if record.record_id in result and tags_map[i]:
+                    result[record.record_id] = _unmask_tags(result[record.record_id], tags_map[i])
+            return result
 
         except Exception as e:
             if attempt < MAX_RETRIES - 1:

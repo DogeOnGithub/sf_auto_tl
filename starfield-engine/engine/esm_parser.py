@@ -51,8 +51,11 @@ def _is_printable_text(text: str) -> bool:
     """检查文本是否为可打印的有效文本，过滤二进制数据被误解码的情况。"""
     if not text:
         return False
+    # 包含 replacement character（\ufffd）说明 UTF-8 解码失败，属于二进制数据
+    if "\ufffd" in text:
+        return False
     printable_count = sum(1 for c in text if c.isprintable() or c in ('\n', '\r', '\t'))
-    return printable_count / len(text) >= 0.8
+    return printable_count / len(text) >= 0.9
 
 
 def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[StringRecord]:
