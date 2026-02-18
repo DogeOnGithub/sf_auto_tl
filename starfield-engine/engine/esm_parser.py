@@ -25,6 +25,10 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"NPC_", b"LNAM"),   # NPC 所属组织名
     (b"REFR", b"UNAM"),   # 地图标记名
     (b"NPC_", b"ATTX"),   # 交互提示文本
+    (b"MESG", b"ITXT"),   # 消息框按钮文本
+    (b"PERK", b"EPF2"),   # Perk 效果描述文本
+    (b"BOOK", b"CNAM"),   # 书籍正文内容
+    (b"MGEF", b"DNAM"),   # 魔法效果描述
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
