@@ -84,12 +84,14 @@ public class TranslationCacheService {
             var kw = keyword.trim();
             wrapper.and(w -> w.apply("source_text ILIKE {0}", "%" + kw + "%")
                     .or().apply("target_text ILIKE {0}", "%" + kw + "%")
-                    .or().apply("subrecord_type ILIKE {0}", "%" + kw + "%"));
+                    .or().apply("subrecord_type ILIKE {0}", "%" + kw + "%")
+                    .or().apply("record_type ILIKE {0}", "%" + kw + "%")
+                    .or().apply("task_id ILIKE {0}", "%" + kw + "%"));
         }
 
         var pageResult = translationCacheRepository.selectPage(new Page<>(page, size), wrapper);
         var records = pageResult.getRecords().stream()
-                .map(c -> new CacheEntryResponse(c.getId(), c.getTaskId(), c.getSubrecordType(),
+                .map(c -> new CacheEntryResponse(c.getId(), c.getTaskId(), c.getRecordType(), c.getSubrecordType(),
                         c.getSourceText(), c.getTargetText(), c.getTargetLang(),
                         c.getCreatedAt(), c.getUpdatedAt()))
                 .collect(Collectors.toList());
@@ -113,7 +115,7 @@ public class TranslationCacheService {
         cache.setTargetText(request.targetText());
         cache.setUpdatedAt(LocalDateTime.now());
         translationCacheRepository.updateById(cache);
-        return new CacheEntryResponse(cache.getId(), cache.getTaskId(), cache.getSubrecordType(),
+        return new CacheEntryResponse(cache.getId(), cache.getTaskId(), cache.getRecordType(), cache.getSubrecordType(),
                 cache.getSourceText(), cache.getTargetText(), cache.getTargetLang(),
                 cache.getCreatedAt(), cache.getUpdatedAt());
     }
@@ -149,6 +151,7 @@ public class TranslationCacheService {
      */
     private CacheQueryResultItem queryItem(CacheQueryItem item, String targetLang) {
         var wrapper = new LambdaQueryWrapper<TranslationCache>()
+                .eq(TranslationCache::getRecordType, Objects.nonNull(item.recordType()) ? item.recordType() : "")
                 .eq(TranslationCache::getSubrecordType, item.subrecordType())
                 .eq(TranslationCache::getSourceText, item.sourceText())
                 .eq(TranslationCache::getTargetLang, targetLang);
@@ -164,7 +167,9 @@ public class TranslationCacheService {
      * UPSERT 单条缓存记录：存在则更新，不存在则插入
      */
     private void upsertItem(CacheSaveItem item, String taskId, String targetLang) {
+        var recordType = Objects.nonNull(item.recordType()) ? item.recordType() : "";
         var wrapper = new LambdaQueryWrapper<TranslationCache>()
+                .eq(TranslationCache::getRecordType, recordType)
                 .eq(TranslationCache::getSubrecordType, item.subrecordType())
                 .eq(TranslationCache::getSourceText, item.sourceText())
                 .eq(TranslationCache::getTargetLang, targetLang);
@@ -175,10 +180,11 @@ public class TranslationCacheService {
             existing.setTaskId(taskId);
             existing.setUpdatedAt(LocalDateTime.now());
             translationCacheRepository.updateById(existing);
-            log.debug("[upsertItem] 更新缓存 subrecordType {} targetLang {}", item.subrecordType(), targetLang);
+            log.debug("[upsertItem] 更新缓存 recordType {} subrecordType {} targetLang {}", recordType, item.subrecordType(), targetLang);
         } else {
             var cache = new TranslationCache();
             cache.setTaskId(taskId);
+            cache.setRecordType(recordType);
             cache.setSubrecordType(item.subrecordType());
             cache.setSourceText(item.sourceText());
             cache.setTargetText(item.targetText());
@@ -186,7 +192,7 @@ public class TranslationCacheService {
             cache.setCreatedAt(LocalDateTime.now());
             cache.setUpdatedAt(LocalDateTime.now());
             translationCacheRepository.insert(cache);
-            log.debug("[upsertItem] 插入缓存 subrecordType {} targetLang {}", item.subrecordType(), targetLang);
+            log.debug("[upsertItem] 插入缓存 recordType {} subrecordType {} targetLang {}", recordType, item.subrecordType(), targetLang);
         }
     }
 }

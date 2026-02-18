@@ -22,6 +22,9 @@ public class TranslationCache {
     @TableField("task_id")
     private String taskId;
 
+    @TableField("record_type")
+    private String recordType;
+
     @TableField("subrecord_type")
     private String subrecordType;
 

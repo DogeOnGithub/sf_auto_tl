@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 public record CacheEntryResponse(
         Long id,
         String taskId,
+        String recordType,
         String subrecordType,
         String sourceText,
         String targetText,

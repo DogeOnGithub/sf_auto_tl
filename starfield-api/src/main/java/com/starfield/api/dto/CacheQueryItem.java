@@ -5,6 +5,7 @@ package com.starfield.api.dto;
  */
 public record CacheQueryItem(
         String recordId,
+        String recordType,
         String subrecordType,
         String sourceText
 ) {}
