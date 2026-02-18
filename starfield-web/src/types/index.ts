@@ -105,6 +105,7 @@ export interface CreationPageResponse {
 export interface CacheEntry {
   id: number
   taskId: string
+  recordType: string
   subrecordType: string
   sourceText: string
   targetText: string

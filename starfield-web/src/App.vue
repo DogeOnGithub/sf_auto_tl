@@ -144,7 +144,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <CreationManager :is-starborn="isStarborn" />
         </div>
 
-        <div v-show="activeMenu === 'cache'" class="page-content">
+        <div v-show="activeMenu === 'cache'" class="page-content" style="max-width: none">
           <h2 class="page-title">翻译缓存</h2>
           <CacheManager :is-starborn="isStarborn" />
         </div>

@@ -142,16 +142,21 @@ onMounted(() => {
       <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
       <el-button v-if="props.isStarborn && selectedEntries.length > 0" type="danger" @click="handleBatchDelete">批量删除 ({{ selectedEntries.length }})</el-button>
     </div>
-    <el-table :data="entries" v-loading="loading" empty-text="暂无缓存记录" @selection-change="handleSelectionChange">
-      <el-table-column v-if="props.isStarborn" type="selection" width="50" />
-      <el-table-column prop="subrecordType" label="类型" width="120" />
-      <el-table-column prop="sourceText" label="原文" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="targetText" label="译文" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="targetLang" label="目标语言" width="100" />
-      <el-table-column label="更新时间" width="160">
+    <el-table :data="entries" v-loading="loading" empty-text="暂无缓存记录" @selection-change="handleSelectionChange" table-layout="auto">
+      <el-table-column v-if="props.isStarborn" type="selection" width="45" />
+      <el-table-column label="类型" width="140">
+        <template #default="{ row }">
+          <span v-if="row.recordType">{{ row.recordType }} → {{ row.subrecordType }}</span>
+          <span v-else>{{ row.subrecordType }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="sourceText" label="原文" min-width="280" show-overflow-tooltip />
+      <el-table-column prop="targetText" label="译文" min-width="280" show-overflow-tooltip />
+      <el-table-column prop="targetLang" label="目标语言" width="90" />
+      <el-table-column label="更新时间" width="150">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" :width="props.isStarborn ? 140 : 80">
+      <el-table-column label="操作" :width="props.isStarborn ? 140 : 80" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
           <el-button v-if="props.isStarborn" size="small" type="danger" @click="handleDelete(row)">删除</el-button>
@@ -173,7 +178,8 @@ onMounted(() => {
     <div v-if="editingEntry" class="edit-form">
       <div class="edit-row">
         <span class="edit-label">类型</span>
-        <span>{{ editingEntry.subrecordType }}</span>
+        <span v-if="editingEntry.recordType">{{ editingEntry.recordType }} → {{ editingEntry.subrecordType }}</span>
+        <span v-else>{{ editingEntry.subrecordType }}</span>
       </div>
       <div class="edit-row">
         <span class="edit-label">原文</span>
