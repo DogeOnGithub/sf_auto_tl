@@ -67,17 +67,25 @@ def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str
     """
     import re
 
-    # 解析 [编号] 译文 格式
+    # 解析 [编号] 译文 格式，支持多行译文
     translations: dict[int, str] = {}
+    current_idx: int | None = None
+    current_lines: list[str] = []
+
     for line in response_text.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
         match = re.match(r"\[(\d+)\]\s*(.*)", line)
         if match:
-            idx = int(match.group(1))
-            text = match.group(2).strip()
-            translations[idx] = text
+            # 保存上一条
+            if current_idx is not None:
+                translations[current_idx] = "\n".join(current_lines).strip()
+            current_idx = int(match.group(1))
+            current_lines = [match.group(2)]
+        elif current_idx is not None:
+            current_lines.append(line)
+
+    # 保存最后一条
+    if current_idx is not None:
+        translations[current_idx] = "\n".join(current_lines).strip()
 
     result: dict[str, str] = {}
 
@@ -184,6 +192,7 @@ def translate_records(
     dictionary_entries: list[dict] | None = None,
     batch_size: int = 20,
     on_batch_done: Callable[[int], None] | None = None,
+    on_batch_translated: Callable[[dict[str, str], list[StringRecord]], None] | None = None,
 ) -> dict[str, str]:
     """批量翻译 StringRecord 列表。
 
@@ -197,6 +206,7 @@ def translate_records(
         dictionary_entries: 词典词条列表。
         batch_size: 每批翻译的记录数，默认 20。
         on_batch_done: 每完成一个 Batch 后的回调函数，参数为当前已翻译总数。
+        on_batch_translated: 每完成一个 Batch 后的回调函数，参数为该批翻译结果和对应的原始记录。
 
     Returns:
         record_id -> translated_text 的映射字典。
@@ -235,6 +245,9 @@ def translate_records(
             dictionary_entries=dictionary_entries,
         )
         all_translations.update(batch_result)
+
+        if on_batch_translated is not None and batch_result:
+            on_batch_translated(batch_result, batch)
 
         if on_batch_done is not None:
             on_batch_done(len(all_translations))

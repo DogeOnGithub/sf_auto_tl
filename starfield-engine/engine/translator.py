@@ -157,6 +157,26 @@ class Translator:
             # 过滤出未命中缓存的词条
             uncached_records = [r for r in records if r.record_id not in cached]
 
+            # 对 uncached 按缓存键 (record_type, subrecord_type, source_text) 去重
+            # 相同文本只翻译一次，翻译完后映射回所有 record_id
+            seen_keys: dict[tuple[str, str], str] = {}  # (sub_type, source_text) -> first record_id
+            dedup_records = []
+            dedup_map: dict[str, list[str]] = {}  # first_record_id -> [all_record_ids]
+            for r in uncached_records:
+                parts = r.record_id.rsplit(":", 1)
+                sub_type = parts[-1] if len(parts) > 1 else ""
+                key = (sub_type, r.text)
+                if key not in seen_keys:
+                    seen_keys[key] = r.record_id
+                    dedup_records.append(r)
+                    dedup_map[r.record_id] = [r.record_id]
+                else:
+                    dedup_map[seen_keys[key]].append(r.record_id)
+
+            dedup_saved = len(uncached_records) - len(dedup_records)
+            if dedup_saved > 0:
+                logger.info("[_run_task] 去重节省 %d 条 LLM 调用 task_id %s", dedup_saved, task_id)
+
             # 缓存命中的词条计入已翻译进度
             self._update_progress(task_id, cached_count, total)
 
@@ -165,24 +185,31 @@ class Translator:
             self._report_progress(task_id, callback_url)
 
             if uncached_records:
-                logger.info("[_run_task] 开始翻译 task_id %s uncached_count %d", task_id, len(uncached_records))
+                logger.info("[_run_task] 开始翻译 task_id %s uncached_count %d dedup_count %d", task_id, len(uncached_records), len(dedup_records))
 
                 def on_batch_done(translated_count: int) -> None:
                     """每批翻译完成后更新进度并上报（加上缓存命中数）。"""
                     self._update_progress(task_id, cached_count + translated_count, total)
                     self._report_progress(task_id, callback_url)
 
-                new_translations = translate_records(
-                    records=uncached_records,
+                def on_batch_translated(batch_result: dict, batch_records: list) -> None:
+                    """每批翻译完成后立即保存缓存，避免中途失败丢失已翻译结果。"""
+                    save_cache(batch_result, batch_records, target_lang, task_id)
+
+                dedup_translations = translate_records(
+                    records=dedup_records,
                     target_lang=target_lang,
                     custom_prompt=custom_prompt,
                     dictionary_entries=dictionary_entries,
                     on_batch_done=on_batch_done,
+                    on_batch_translated=on_batch_translated,
                 )
 
-                # 4. 保存新翻译到缓存
-                if new_translations:
-                    save_cache(new_translations, uncached_records, target_lang, task_id)
+                # 将去重后的翻译结果展开回所有 record_id
+                new_translations = {}
+                for first_id, translated_text in dedup_translations.items():
+                    for rid in dedup_map.get(first_id, [first_id]):
+                        new_translations[rid] = translated_text
             else:
                 logger.info("[_run_task] 所有词条命中缓存 task_id %s", task_id)
                 new_translations = {}

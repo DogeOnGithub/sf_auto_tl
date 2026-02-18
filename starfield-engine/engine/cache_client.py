@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8080")
 
 
+def _extract_record_type(record_id: str) -> str:
+    """从 record_id 中提取 record_type（第一个冒号前的部分）。
+
+    例如 "RFGP:0100448A:RNAM" → "RFGP"
+    """
+    return record_id.split(":", 1)[0]
+
+
 def _extract_subrecord_type(record_id: str) -> str:
     """从 record_id 中提取 subrecord_type（最后一个冒号后的部分）。
 
@@ -39,6 +47,7 @@ def query_cache(records: List[StringRecord], target_lang: str) -> Dict[str, str]
     items = [
         {
             "recordId": r.record_id,
+            "recordType": _extract_record_type(r.record_id),
             "subrecordType": _extract_subrecord_type(r.record_id),
             "sourceText": r.text,
         }
@@ -95,6 +104,7 @@ def save_cache(
         if record is None:
             continue
         items.append({
+            "recordType": _extract_record_type(record_id),
             "subrecordType": _extract_subrecord_type(record_id),
             "sourceText": record.text,
             "targetText": target_text,
