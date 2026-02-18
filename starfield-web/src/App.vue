@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Reading, Setting, Collection, Clock, Folder, Memo } from '@element-plus/icons-vue'
+import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
@@ -12,12 +12,12 @@ import CacheManager from '@/components/CacheManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
 import type { FileUploadResponse } from '@/types'
 
-const VALID_MENUS = ['translate', 'history', 'cache', 'prompt', 'dictionary', 'creations']
+const VALID_MENUS = ['home', 'translate', 'history', 'cache', 'prompt', 'dictionary', 'creations']
 
 /** 从 hash 读取当前菜单 */
 function getMenuFromHash(): string {
   var hash = location.hash.replace('#/', '').replace('#', '')
-  return VALID_MENUS.includes(hash) ? hash : 'translate'
+  return VALID_MENUS.includes(hash) ? hash : 'home'
 }
 
 const taskListRef = ref<InstanceType<typeof TaskList>>()
@@ -89,6 +89,10 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         @select="handleMenuSelect"
         class="side-menu"
       >
+        <el-menu-item index="home">
+          <el-icon><HomeFilled /></el-icon>
+          <span>首页</span>
+        </el-menu-item>
         <el-menu-item index="translate">
           <el-icon><Reading /></el-icon>
           <span>翻译</span>
@@ -118,33 +122,37 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 
     <el-container>
       <el-main class="app-main">
-        <div v-show="activeMenu === 'translate'" class="page-content">
+        <div v-if="activeMenu === 'home'" class="page-content home-page">
+          <h1 class="welcome-text">Welcome, Captain!</h1>
+        </div>
+
+        <div v-if="activeMenu === 'translate'" class="page-content">
           <h2 class="page-title">翻译任务</h2>
           <FileUpload @upload-success="handleUploadSuccess" />
           <TaskList ref="taskListRef" :limit="3" />
         </div>
 
-        <div v-show="activeMenu === 'history'" class="page-content">
+        <div v-if="activeMenu === 'history'" class="page-content">
           <h2 class="page-title">翻译历史</h2>
           <TaskHistory />
         </div>
 
-        <div v-show="activeMenu === 'prompt'" class="page-content">
+        <div v-if="activeMenu === 'prompt'" class="page-content">
           <h2 class="page-title">Prompt 管理</h2>
           <PromptManager />
         </div>
 
-        <div v-show="activeMenu === 'dictionary'" class="page-content">
+        <div v-if="activeMenu === 'dictionary'" class="page-content">
           <h2 class="page-title">词典</h2>
           <DictionaryManager />
         </div>
 
-        <div v-show="activeMenu === 'creations'" class="page-content" style="max-width: none">
+        <div v-if="activeMenu === 'creations'" class="page-content" style="max-width: none">
           <h2 class="page-title">Creations</h2>
           <CreationManager :is-starborn="isStarborn" />
         </div>
 
-        <div v-show="activeMenu === 'cache'" class="page-content" style="max-width: none">
+        <div v-if="activeMenu === 'cache'" class="page-content" style="max-width: none">
           <h2 class="page-title">翻译缓存</h2>
           <CacheManager :is-starborn="isStarborn" />
         </div>
@@ -201,5 +209,20 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 
 .page-content {
   max-width: 960px;
+}
+
+.home-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  max-width: none;
+}
+
+.welcome-text {
+  font-size: 36px;
+  font-weight: 300;
+  color: var(--el-text-color-primary);
+  letter-spacing: 2px;
 }
 </style>
