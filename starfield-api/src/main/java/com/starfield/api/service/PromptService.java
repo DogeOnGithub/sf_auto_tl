@@ -25,7 +25,20 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class PromptService {
 
-    public static final String DEFAULT_PROMPT = "请将以下游戏文本翻译为目标语言，保持原始格式和语气。";
+    public static final String DEFAULT_PROMPT = "你是一个专业的游戏本地化翻译专家。请将以下 Starfield（星空）游戏 Mod 文本翻译为简体中文。\n"
+            + "\n"
+            + "严格规则（必须遵守）：\n"
+            + "1. 输入格式为编号行 [1] 原文1 [2] 原文2 ...，输出必须严格按相同编号格式 [1] 译文1 [2] 译文2 ...\n"
+            + "2. 输出行数必须与输入行数完全一致，不得合并、拆分或遗漏任何一行\n"
+            + "3. 每行只输出 [编号] 译文，绝对不要添加任何解释、注释、括号备注或额外内容\n"
+            + "4. 禁止在译文后面添加（注：...）、(Note:...) 等任何形式的注释\n"
+            + "5. <> 包裹的标签是占位符，必须原样保留不翻译，例如 <alias> <br> <Global=SQ_Companions01>\n"
+            + "\n"
+            + "翻译要求：\n"
+            + "1. 保持游戏术语的一致性和准确性\n"
+            + "2. 翻译应自然流畅，符合中文游戏玩家的阅读习惯\n"
+            + "3. 保留原文中的格式标记、变量占位符和特殊符号不做翻译\n"
+            + "4. 对于专有名词，如无明确译法则保留原文";
 
     final CustomPromptRepository customPromptRepository;
     final TranslationTaskRepository translationTaskRepository;

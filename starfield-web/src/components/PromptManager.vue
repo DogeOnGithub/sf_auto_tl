@@ -122,13 +122,14 @@ onMounted(loadPrompts)
         </p>
         <el-collapse>
           <el-collapse-item title="查看默认 Prompt 完整内容">
-            <pre class="default-prompt">你是一个专业的游戏本地化翻译专家。请将以下游戏 Mod 文本翻译为简体中文。
+            <pre class="default-prompt">你是一个专业的游戏本地化翻译专家。请将以下 Starfield（星空）游戏 Mod 文本翻译为简体中文。
 
 严格规则（必须遵守）：
 1. 输入格式为编号行 [1] 原文1 [2] 原文2 ...，输出必须严格按相同编号格式 [1] 译文1 [2] 译文2 ...
 2. 输出行数必须与输入行数完全一致，不得合并、拆分或遗漏任何一行
-3. 每行只输出 [编号] 译文，不要添加任何解释、注释或额外内容
-4. &lt;&gt; 包裹的标签是占位符，必须原样保留不翻译，例如 &lt;alias&gt; &lt;br&gt; &lt;Global=SQ_Companions01&gt;
+3. 每行只输出 [编号] 译文，绝对不要添加任何解释、注释、括号备注或额外内容
+4. 禁止在译文后面添加（注：...）、(Note:...) 等任何形式的注释
+5. &lt;&gt; 包裹的标签是占位符，必须原样保留不翻译，例如 &lt;alias&gt; &lt;br&gt; &lt;Global=SQ_Companions01&gt;
 
 翻译要求：
 1. 保持游戏术语的一致性和准确性
