@@ -569,6 +569,14 @@ public class TaskService {
             return;
         }
 
+        // 关联了未删除的 creation version 时禁止清理
+        if (Objects.nonNull(task.getCreationVersionId())) {
+            var version = creationVersionRepository.selectById(task.getCreationVersionId());
+            if (Objects.nonNull(version)) {
+                throw new TaskLinkedToCreationException(taskId, version.getCreationId());
+            }
+        }
+
         try {
             deleteCosFile(task);
         } catch (Exception e) {
@@ -665,6 +673,15 @@ public class TaskService {
     public static class TaskNotFoundException extends RuntimeException {
         public TaskNotFoundException(String taskId) {
             super("翻译任务不存在 taskId " + taskId);
+        }
+    }
+
+    /**
+     * 任务关联了 creation 版本，不允许清理
+     */
+    public static class TaskLinkedToCreationException extends RuntimeException {
+        public TaskLinkedToCreationException(String taskId, Long creationId) {
+            super("任务关联了作品 无法清理 taskId " + taskId + " creationId " + creationId);
         }
     }
 }

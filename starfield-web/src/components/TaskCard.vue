@@ -116,7 +116,7 @@ async function handleExpire() {
       <el-button type="primary" size="small" :icon="Download" @click="handleDownload()">
         下载翻译文件
       </el-button>
-      <el-button v-if="isStarborn" type="danger" size="small" :icon="Delete" @click="handleExpire()">
+      <el-button v-if="isStarborn && !task.creation" type="danger" size="small" :icon="Delete" @click="handleExpire()">
         清理
       </el-button>
     </div>

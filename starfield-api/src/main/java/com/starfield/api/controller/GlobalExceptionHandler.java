@@ -153,5 +153,15 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("DUPLICATE_VERSION", "该版本已存在，不能重复上传"));
     }
 
+    /**
+     * 处理任务关联 creation 不允许清理异常
+     */
+    @ExceptionHandler(TaskService.TaskLinkedToCreationException.class)
+    public ResponseEntity<ErrorResponse> handleTaskLinkedToCreation(TaskService.TaskLinkedToCreationException e) {
+        log.warn("[handleTaskLinkedToCreation] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("TASK_LINKED_TO_CREATION", "任务关联了作品，请先删除关联的版本"));
+    }
+
 
 }

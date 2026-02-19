@@ -63,9 +63,9 @@ function toggleSelect(taskId: string, val: boolean) {
   }
 }
 
-/** 任务是否可勾选（仅 completed / failed） */
+/** 任务是否可勾选（completed/failed 且未关联 creation） */
 function isExpirable(task: TaskResponse): boolean {
-  return task.status === 'completed' || task.status === 'failed'
+  return (task.status === 'completed' || task.status === 'failed') && !task.creation
 }
 
 function stopPolling(taskId: string) {
