@@ -42,6 +42,7 @@ public class FileUploadService {
     private String apiBaseUrl;
 
     private static final String ESM_EXTENSION = ".esm";
+    private static final String ESP_EXTENSION = ".esp";
     private static final byte[] ESM_MAGIC_BYTES = "TES4".getBytes();
 
     /**
@@ -117,8 +118,9 @@ public class FileUploadService {
     void validateEsmFormat(MultipartFile file) {
         var fileName = file.getOriginalFilename();
 
-        if (Objects.isNull(fileName) || !fileName.toLowerCase().endsWith(ESM_EXTENSION)) {
-            log.warn("[validateEsmFormat] 文件扩展名不是 .esm fileName {}", fileName);
+        var lowerName = Objects.isNull(fileName) ? "" : fileName.toLowerCase();
+        if (!lowerName.endsWith(ESM_EXTENSION) && !lowerName.endsWith(ESP_EXTENSION)) {
+            log.warn("[validateEsmFormat] 文件扩展名不是 .esm 或 .esp fileName {}", fileName);
             throw new InvalidEsmFormatException();
         }
 
@@ -149,7 +151,10 @@ public class FileUploadService {
             Files.createDirectories(uploadPath);
         }
 
-        var storedFileName = taskId + ESM_EXTENSION;
+        var originalName = file.getOriginalFilename();
+        var ext = Objects.nonNull(originalName) && originalName.toLowerCase().endsWith(ESP_EXTENSION)
+                ? ESP_EXTENSION : ESM_EXTENSION;
+        var storedFileName = taskId + ext;
         var targetPath = uploadPath.resolve(storedFileName);
         Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
         log.info("[storeFile] 文件存储成功 path {}", targetPath);
@@ -211,7 +216,7 @@ public class FileUploadService {
      */
     public static class InvalidEsmFormatException extends RuntimeException {
         public InvalidEsmFormatException() {
-            super("文件不是有效的 ESM 格式");
+            super("文件不是有效的 ESM/ESP 格式");
         }
     }
 }

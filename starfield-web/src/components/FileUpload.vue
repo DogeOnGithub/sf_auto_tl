@@ -86,8 +86,9 @@ async function handlePromptModeChange(val: string) {
 
 /** 上传前校验 */
 function beforeUpload(file: File): boolean {
-  if (!file.name.toLowerCase().endsWith('.esm')) {
-    ElMessage.error('仅支持 .esm 格式的文件')
+  var lowerName = file.name.toLowerCase()
+  if (!lowerName.endsWith('.esm') && !lowerName.endsWith('.esp')) {
+    ElMessage.error('仅支持 .esm / .esp 格式的文件')
     return false
   }
   if (file.size > MAX_FILE_SIZE) {
@@ -215,7 +216,7 @@ async function handleUpload(options: UploadRequestOptions) {
 
     <el-upload
       drag
-      accept=".esm"
+      accept=".esm,.esp"
       :show-file-list="false"
       :before-upload="beforeUpload"
       :http-request="handleUpload"
@@ -227,8 +228,8 @@ async function handleUpload(options: UploadRequestOptions) {
       </div>
       <div v-else class="upload-placeholder">
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
-        <p class="upload-text">将 ESM 文件拖拽到此处，或 <em>点击选择文件</em></p>
-        <p class="upload-hint">仅支持 .esm 格式，最大 200MB</p>
+        <p class="upload-text">将 ESM/ESP 文件拖拽到此处，或 <em>点击选择文件</em></p>
+        <p class="upload-hint">支持 .esm / .esp 格式，最大 200MB</p>
       </div>
     </el-upload>
   </div>

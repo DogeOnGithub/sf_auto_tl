@@ -364,22 +364,12 @@ public class TaskService {
 
         log.info("[createZipArchive] 开始打包 taskId {} zipPath {}", task.getTaskId(), zipPath);
 
+        var folderName = zipFileName.replace(".zip", "") + "/";
         try (var zos = new ZipOutputStream(Files.newOutputStream(zipPath))) {
-            // 添加翻译输出文件
             if (Files.exists(outputPath)) {
-                zos.putNextEntry(new ZipEntry(outputPath.getFileName().toString()));
+                zos.putNextEntry(new ZipEntry(folderName + task.getFileName()));
                 Files.copy(outputPath, zos);
                 zos.closeEntry();
-            }
-
-            // 添加原始备份文件
-            if (Objects.nonNull(task.getOriginalBackupPath())) {
-                var backupPath = Path.of(task.getOriginalBackupPath());
-                if (Files.exists(backupPath)) {
-                    zos.putNextEntry(new ZipEntry(backupPath.getFileName().toString()));
-                    Files.copy(backupPath, zos);
-                    zos.closeEntry();
-                }
             }
         }
 
@@ -435,10 +425,9 @@ public class TaskService {
      */
     private String getZipFileName(TranslationTask task) {
         var fileName = task.getFileName();
-        if (fileName.toLowerCase().endsWith(".esm")) {
-            return fileName.substring(0, fileName.length() - 4) + ".zip";
-        }
-        return fileName + ".zip";
+        var dotIndex = fileName.lastIndexOf('.');
+        var baseName = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
+        return baseName + ".zip";
     }
 
     /**

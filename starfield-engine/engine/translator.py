@@ -223,8 +223,9 @@ class Translator:
             self._report_progress(task_id, callback_url)
             logger.info("[_run_task] 开始重组 task_id %s", task_id)
 
-            output_path = file_path.rsplit(".", 1)[0] + "_translated.esm"
-            backup_path = file_path.rsplit(".", 1)[0] + "_backup.esm"
+            name, ext = file_path.rsplit(".", 1)
+            output_path = f"{name}_translated.{ext}"
+            backup_path = f"{name}_backup.{ext}"
 
             result = write_esm(
                 original_path=file_path,
