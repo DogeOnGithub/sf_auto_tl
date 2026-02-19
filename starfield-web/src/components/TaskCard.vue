@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Download } from '@element-plus/icons-vue'
-import { downloadFile } from '@/services/taskApi'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Download, Delete } from '@element-plus/icons-vue'
+import { downloadFile, expireTask } from '@/services/taskApi'
+import { useStarborn } from '@/composables/useStarborn'
 import type { TaskResponse } from '@/types'
 
 const props = defineProps<{
   task: TaskResponse
 }>()
+
+const emit = defineEmits<{
+  'task-expired': [taskId: string]
+}>()
+
+const { isStarborn } = useStarborn()
 
 /** 格式化时间为 yyyy-MM-dd HH:mm:ss */
 function formatTime(dateStr: string): string {
@@ -27,6 +34,7 @@ const statusTagType = computed(() => {
     assembling: 'warning',
     completed: 'success',
     failed: 'danger',
+    expired: 'info',
   }
   return map[props.task.status] ?? 'info'
 })
@@ -40,6 +48,7 @@ const statusLabel = computed(() => {
     assembling: '重组中',
     completed: '已完成',
     failed: '失败',
+    expired: '已过期',
   }
   return map[props.task.status] ?? props.task.status
 })
@@ -64,6 +73,16 @@ async function handleDownload() {
   } catch {
     ElMessage.error('下载失败，请重试')
   }
+}
+
+/** 手动清理任务 */
+async function handleExpire() {
+  try {
+    await ElMessageBox.confirm('确定清理该任务？COS 文件将被删除且无法恢复', '清理确认', { type: 'warning' })
+    await expireTask(props.task.taskId)
+    ElMessage.success('任务已清理')
+    emit('task-expired', props.task.taskId)
+  } catch { /* 取消 */ }
 }
 </script>
 
@@ -97,11 +116,20 @@ async function handleDownload() {
       <el-button type="primary" size="small" :icon="Download" @click="handleDownload()">
         下载翻译文件
       </el-button>
+      <el-button v-if="isStarborn" type="danger" size="small" :icon="Delete" @click="handleExpire()">
+        清理
+      </el-button>
     </div>
 
     <div v-if="task.status === 'failed'" class="task-error">
       <el-alert type="error" :closable="false" show-icon>
         翻译失败
+      </el-alert>
+    </div>
+
+    <div v-if="task.status === 'expired'" class="task-expired">
+      <el-alert type="info" :closable="false" show-icon>
+        任务已过期，文件已清理
       </el-alert>
     </div>
   </el-card>

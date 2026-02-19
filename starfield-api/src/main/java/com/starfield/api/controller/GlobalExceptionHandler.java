@@ -63,6 +63,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理任务已过期异常
+     */
+    @ExceptionHandler(DownloadService.TaskExpiredException.class)
+    public ResponseEntity<ErrorResponse> handleTaskExpired(DownloadService.TaskExpiredException e) {
+        log.warn("[handleTaskExpired] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.GONE)
+                .body(new ErrorResponse("TASK_EXPIRED", "翻译任务已过期 文件已清理"));
+    }
+
+    /**
      * 处理下载链接为空异常
      */
     @ExceptionHandler(DownloadService.DownloadUrlEmptyException.class)

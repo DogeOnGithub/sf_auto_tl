@@ -132,7 +132,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <TaskList ref="taskListRef" :limit="3" />
         </div>
 
-        <div v-if="activeMenu === 'history'" class="page-content">
+        <div v-if="activeMenu === 'history'" class="page-content" style="max-width: none">
           <h2 class="page-title">翻译历史</h2>
           <TaskHistory />
         </div>

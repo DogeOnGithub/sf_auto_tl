@@ -120,3 +120,10 @@ export interface CachePageResponse {
   current: number
   pages: number
 }
+
+export interface TaskPageResponse {
+  records: TaskResponse[]
+  total: number
+  current: number
+  pages: number
+}

@@ -30,4 +30,12 @@ public class TaskProgressScheduler {
     public void cleanupUploads() {
         taskService.cleanupUploadsIfOversized();
     }
+
+    /**
+     * 每天凌晨 3 点清理过期任务的 COS 文件
+     */
+    @Scheduled(cron = "0 0 3 * * ?")
+    public void cleanupExpiredTasks() {
+        taskService.cleanupExpiredTasks();
+    }
 }

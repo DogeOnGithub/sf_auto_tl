@@ -16,7 +16,7 @@ const pollingTimers = ref<Map<string, ReturnType<typeof setInterval>>>(new Map()
 const loading = ref(false)
 
 /** 终态状态集合 */
-const terminalStatuses = new Set(['completed', 'failed'])
+const terminalStatuses = new Set(['completed', 'failed', 'expired'])
 
 /** 根据 limit 截取显示的任务 */
 const displayedTasks = computed(() => {
@@ -117,13 +117,26 @@ onUnmounted(() => {
   pollingTimers.value.clear()
 })
 
+/** 任务被手动清理后刷新该任务状态 */
+async function handleTaskExpired(taskId: string) {
+  try {
+    var updated = await getTask(taskId)
+    var idx = tasks.value.findIndex((t) => t.taskId === taskId)
+    if (idx !== -1) {
+      tasks.value[idx] = updated
+    }
+  } catch {
+    // 静默处理
+  }
+}
+
 defineExpose({ addTask })
 </script>
 
 <template>
   <div class="task-list">
     <h3 v-if="tasks.length > 0" class="task-list-title">翻译任务</h3>
-    <TaskCard v-for="task in displayedTasks" :key="task.taskId" :task="task" />
+    <TaskCard v-for="task in displayedTasks" :key="task.taskId" :task="task" @task-expired="handleTaskExpired" />
     <el-empty v-if="!loading && tasks.length === 0" description="暂无翻译任务" :image-size="80" />
     <div v-if="loading" style="text-align: center; padding: 24px">
       <el-icon class="is-loading" :size="24"><Loading /></el-icon>

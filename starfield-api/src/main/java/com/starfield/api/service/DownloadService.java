@@ -35,6 +35,10 @@ public class DownloadService {
         }
 
         if (task.getStatus() != TaskStatus.completed) {
+            if (task.getStatus() == TaskStatus.expired) {
+                log.warn("[getDownloadFile] 任务已过期 taskId {}", taskId);
+                throw new TaskExpiredException(taskId);
+            }
             log.warn("[getDownloadFile] 任务未完成 taskId {} status {}", taskId, task.getStatus());
             throw new TaskNotCompletedException(taskId);
         }
@@ -70,6 +74,13 @@ public class DownloadService {
     public static class TaskNotCompletedException extends RuntimeException {
         public TaskNotCompletedException(String taskId) {
             super("翻译任务尚未完成 taskId " + taskId);
+        }
+    }
+
+    /** 任务已过期异常 */
+    public static class TaskExpiredException extends RuntimeException {
+        public TaskExpiredException(String taskId) {
+            super("翻译任务已过期 文件已清理 taskId " + taskId);
         }
     }
 

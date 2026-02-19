@@ -1,8 +1,11 @@
 package com.starfield.api.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.client.EngineClient;
+import com.starfield.api.config.CosProperties;
 import com.starfield.api.dto.ProgressCallbackRequest;
+import com.starfield.api.dto.TaskPageResponse;
 import com.starfield.api.dto.TaskResponse;
 import com.starfield.api.entity.Creation;
 import com.starfield.api.entity.CreationVersion;
@@ -21,6 +24,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -42,12 +46,16 @@ public class TaskService {
     final CustomPromptRepository customPromptRepository;
     final EngineClient engineClient;
     final CosService cosService;
+    final CosProperties cosProperties;
 
     @Value("${storage.upload-dir:./uploads}")
     private String uploadDir;
 
     /** uploads 目录大小阈值 20GB */
     private static final long UPLOAD_DIR_SIZE_THRESHOLD = 20L * 1024 * 1024 * 1024;
+
+    /** 任务过期天数 */
+    private static final int TASK_EXPIRATION_DAYS = 5;
 
     /**
      * 查询翻译任务状态和进度，尝试从引擎同步最新进度
@@ -83,6 +91,24 @@ public class TaskService {
         return tasks.stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 分页查询翻译任务列表
+     *
+     * @param page 页码
+     * @param size 每页大小
+     * @return 分页响应
+     */
+    public TaskPageResponse listTasksPaged(int page, int size) {
+        log.info("[listTasksPaged] 分页查询任务 page {} size {}", page, size);
+        var wrapper = new QueryWrapper<TranslationTask>()
+                .orderByDesc("created_at");
+        var pageResult = translationTaskRepository.selectPage(new Page<>(page, size), wrapper);
+        var records = pageResult.getRecords().stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+        return new TaskPageResponse(records, pageResult.getTotal(), pageResult.getCurrent(), pageResult.getPages());
     }
 
     /**
@@ -224,7 +250,7 @@ public class TaskService {
      */
     public void syncActiveTasksFromEngine() {
         var wrapper = new QueryWrapper<TranslationTask>()
-                .notIn("status", TaskStatus.completed.name(), TaskStatus.failed.name());
+                .notIn("status", TaskStatus.completed.name(), TaskStatus.failed.name(), TaskStatus.expired.name());
         var activeTasks = translationTaskRepository.selectList(wrapper);
         log.info("[syncActiveTasksFromEngine] 活跃任务数 {}", activeTasks.size());
         activeTasks.forEach(this::syncProgressFromEngine);
@@ -522,6 +548,114 @@ public class TaskService {
                         }
                     })
                     .sum();
+        }
+    }
+
+    /**
+     * 手动清理单个翻译任务：删除 COS 文件并标记为 expired
+     *
+     * @param taskId 任务 ID
+     */
+    public void expireTask(String taskId) {
+        log.info("[expireTask] 手动清理任务 taskId {}", taskId);
+
+        var task = translationTaskRepository.selectById(taskId);
+        if (Objects.isNull(task)) {
+            throw new TaskNotFoundException(taskId);
+        }
+
+        if (task.getStatus() == TaskStatus.expired) {
+            log.info("[expireTask] 任务已过期 无需重复清理 taskId {}", taskId);
+            return;
+        }
+
+        try {
+            deleteCosFile(task);
+        } catch (Exception e) {
+            log.warn("[expireTask] COS 文件删除失败 taskId {} 继续标记过期", taskId, e);
+        }
+
+        task.setStatus(TaskStatus.expired);
+        task.setDownloadUrl(null);
+        translationTaskRepository.updateById(task);
+        log.info("[expireTask] 任务已标记过期 taskId {}", taskId);
+    }
+
+    /**
+     * 批量清理翻译任务：删除 COS 文件并标记为 expired
+     *
+     * @param taskIds 任务 ID 列表
+     * @return 成功清理的数量
+     */
+    public int batchExpireTasks(List<String> taskIds) {
+        log.info("[batchExpireTasks] 批量清理任务 count {}", taskIds.size());
+        var expiredCount = 0;
+        for (var taskId : taskIds) {
+            try {
+                expireTask(taskId);
+                expiredCount++;
+            } catch (Exception e) {
+                log.warn("[batchExpireTasks] 清理失败 taskId {}", taskId, e);
+            }
+        }
+        log.info("[batchExpireTasks] 批量清理完成 expiredCount {}", expiredCount);
+        return expiredCount;
+    }
+
+    /**
+     * 清理过期任务的 COS 文件并标记为 expired
+     * 条件：任务创建超过 5 天且未关联 creation
+     */
+    public void cleanupExpiredTasks() {
+        var cutoff = LocalDateTime.now().minusDays(TASK_EXPIRATION_DAYS);
+        var wrapper = new QueryWrapper<TranslationTask>()
+                .eq("status", TaskStatus.completed.name())
+                .isNull("creation_version_id")
+                .isNotNull("download_url")
+                .le("created_at", cutoff);
+        var tasks = translationTaskRepository.selectList(wrapper);
+
+        if (tasks.isEmpty()) {
+            log.info("[cleanupExpiredTasks] 无过期任务需要清理");
+            return;
+        }
+
+        log.info("[cleanupExpiredTasks] 发现过期任务 count {}", tasks.size());
+
+        var expiredCount = 0;
+        for (var task : tasks) {
+            try {
+                deleteCosFile(task);
+                task.setStatus(TaskStatus.expired);
+                task.setDownloadUrl(null);
+                translationTaskRepository.updateById(task);
+                expiredCount++;
+                log.info("[cleanupExpiredTasks] 任务已过期 taskId {}", task.getTaskId());
+            } catch (Exception e) {
+                log.error("[cleanupExpiredTasks] 清理失败 taskId {}", task.getTaskId(), e);
+            }
+        }
+
+        log.info("[cleanupExpiredTasks] 清理完成 expiredCount {}", expiredCount);
+    }
+
+    /**
+     * 删除任务关联的 COS 文件
+     *
+     * @param task 翻译任务
+     */
+    private void deleteCosFile(TranslationTask task) {
+        var downloadUrl = task.getDownloadUrl();
+        if (Objects.isNull(downloadUrl)) {
+            return;
+        }
+        var baseUrl = cosProperties.baseUrl();
+        if (downloadUrl.startsWith(baseUrl)) {
+            var cosKey = downloadUrl.substring(baseUrl.length() + 1);
+            cosService.deleteObject(cosKey);
+            log.info("[deleteCosFile] COS 文件已删除 taskId {} cosKey {}", task.getTaskId(), cosKey);
+        } else {
+            log.warn("[deleteCosFile] 下载链接格式不匹配 taskId {} downloadUrl {}", task.getTaskId(), downloadUrl);
         }
     }
 
