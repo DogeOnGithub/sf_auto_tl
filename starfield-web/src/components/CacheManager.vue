@@ -153,7 +153,7 @@ onMounted(() => {
       <el-table-column prop="sourceText" label="原文" min-width="280" show-overflow-tooltip />
       <el-table-column prop="targetText" label="译文" min-width="280" show-overflow-tooltip />
       <el-table-column prop="targetLang" label="目标语言" width="90" />
-      <el-table-column label="更新时间" width="150">
+      <el-table-column label="更新时间" width="160">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
       <el-table-column label="操作" :width="props.isStarborn ? 140 : 80" fixed="right">
