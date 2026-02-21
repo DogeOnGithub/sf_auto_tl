@@ -13,6 +13,7 @@ from engine.esm_parser import (
     GRUP_HEADER_SIZE,
     RECORD_HEADER_SIZE,
     SUBRECORD_HEADER_SIZE,
+    TRANSLATABLE_COMBINATIONS,
     TRANSLATABLE_SUBRECORD_TYPES,
 )
 
@@ -59,7 +60,11 @@ def _rewrite_subrecords(
 
         sub_data = data[offset + SUBRECORD_HEADER_SIZE : offset + SUBRECORD_HEADER_SIZE + sub_size]
 
-        if sub_type in TRANSLATABLE_SUBRECORD_TYPES and sub_size > 0:
+        is_translatable = (
+            sub_type in TRANSLATABLE_SUBRECORD_TYPES
+            or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
+        )
+        if is_translatable and sub_size > 0:
             record_id = _build_record_id(record_type, form_id, sub_type)
             if record_id in translations:
                 new_text = translations[record_id]
