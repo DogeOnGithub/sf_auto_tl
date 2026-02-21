@@ -176,10 +176,11 @@ public class TaskService {
             log.info("[handleProgressCallback] confirmation 模式增量写入确认记录 taskId {} count {}", taskId, saveItems.size());
         }
 
-        // confirmation 模式下 翻译阶段引擎回调 assembling 状态时拦截 改为 pending_confirmation
+        // confirmation 模式下 翻译阶段引擎回调 completed 状态时拦截 改为 pending_confirmation
+        // （Engine 在 confirmation 模式下跳过重组步骤 直接回调 completed）
         // 当任务已经是 assembling（由 generateFile 设置）时不再拦截
-        if (isConfirmationMode && newStatus == TaskStatus.assembling && currentStatus != TaskStatus.assembling) {
-            log.info("[handleProgressCallback] confirmation 模式拦截 assembling 状态 改为 pending_confirmation taskId {}", taskId);
+        if (isConfirmationMode && newStatus == TaskStatus.completed && currentStatus != TaskStatus.assembling) {
+            log.info("[handleProgressCallback] confirmation 模式拦截 completed 状态 改为 pending_confirmation taskId {}", taskId);
 
             // 校验确认记录数与总词条数是否一致
             var confirmationCount = translationConfirmationService.countByTaskId(taskId);
@@ -628,6 +629,18 @@ public class TaskService {
         deleteLocalFile(task.getFilePath(), taskId);
         deleteLocalFile(task.getOutputFilePath(), taskId);
         deleteLocalFile(task.getOriginalBackupPath(), taskId);
+
+        // 兜底：根据 filePath 推算 translated 和 backup 路径并尝试删除（防止 DB 字段为 null 时残留）
+        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
+            var basePath = task.getFilePath();
+            var dotIdx = basePath.lastIndexOf('.');
+            if (dotIdx > 0) {
+                var name = basePath.substring(0, dotIdx);
+                var ext = basePath.substring(dotIdx);
+                deleteLocalFile(name + "_translated" + ext, taskId);
+                deleteLocalFile(name + "_backup" + ext, taskId);
+            }
+        }
 
         // 清理确认记录
         try {

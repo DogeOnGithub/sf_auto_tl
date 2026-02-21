@@ -301,30 +301,36 @@ class Translator:
                 logger.info("[_run_task] 汇总上报所有词条 task_id %s count %d", task_id, len(all_items))
                 self._report_progress(task_id, callback_url, items=all_items)
 
-            # 6. 重组 ESM
-            self._update_status(task_id, STATUS_ASSEMBLING)
-            self._report_progress(task_id, callback_url)
-            logger.info("[_run_task] 开始重组 task_id %s", task_id)
+            # 6. 重组 ESM（confirmation 模式跳过，由后续 assembly 接口生成）
+            if skip_cache:
+                logger.info("[_run_task] confirmation 模式跳过重组 task_id %s", task_id)
+                self._update_status(task_id, STATUS_COMPLETED)
+                self._report_progress(task_id, callback_url)
+                logger.info("[_run_task] 翻译任务完成 task_id %s", task_id)
+            else:
+                self._update_status(task_id, STATUS_ASSEMBLING)
+                self._report_progress(task_id, callback_url)
+                logger.info("[_run_task] 开始重组 task_id %s", task_id)
 
-            name, ext = file_path.rsplit(".", 1)
-            output_path = f"{name}_translated.{ext}"
-            backup_path = f"{name}_backup.{ext}"
+                name, ext = file_path.rsplit(".", 1)
+                output_path = f"{name}_translated.{ext}"
+                backup_path = f"{name}_backup.{ext}"
 
-            result = write_esm(
-                original_path=file_path,
-                translations=translations,
-                output_path=output_path,
-                backup_path=backup_path,
-            )
+                result = write_esm(
+                    original_path=file_path,
+                    translations=translations,
+                    output_path=output_path,
+                    backup_path=backup_path,
+                )
 
-            with self._lock:
-                if task_id in self._tasks:
-                    self._tasks[task_id]["status"] = STATUS_COMPLETED
-                    self._tasks[task_id]["outputFilePath"] = result.output_path
-                    self._tasks[task_id]["originalBackupPath"] = result.backup_path
+                with self._lock:
+                    if task_id in self._tasks:
+                        self._tasks[task_id]["status"] = STATUS_COMPLETED
+                        self._tasks[task_id]["outputFilePath"] = result.output_path
+                        self._tasks[task_id]["originalBackupPath"] = result.backup_path
 
-            self._report_progress(task_id, callback_url)
-            logger.info("[_run_task] 翻译任务完成 task_id %s", task_id)
+                self._report_progress(task_id, callback_url)
+                logger.info("[_run_task] 翻译任务完成 task_id %s", task_id)
 
         except Exception as e:
             logger.error("[_run_task] 翻译任务异常 task_id %s error %s", task_id, str(e), exc_info=True)
