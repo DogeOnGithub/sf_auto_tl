@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Check } from '@element-plus/icons-vue'
 import { uploadFile } from '@/services/fileApi'
 import { getCreations } from '@/services/creationApi'
 import { listPrompts } from '@/services/promptApi'
@@ -24,8 +24,8 @@ const selectedCreationId = ref<number | null>(null)
 const selectedVersionId = ref<number | null>(null)
 const loadingCreations = ref(false)
 
-/** 翻译路线 */
-const confirmationMode = ref<'direct' | 'confirmation'>('direct')
+/** 翻译模式 */
+const confirmationMode = ref<'direct' | 'confirmation'>('confirmation')
 
 /** Prompt 选择 */
 const promptMode = ref<'default' | 'select' | 'new'>('default')
@@ -152,19 +152,12 @@ async function handleUpload(options: UploadRequestOptions) {
 
 <template>
   <div class="file-upload">
-    <div class="upload-mode">
+    <!-- 关联 Creation 开关 -->
+    <div class="option-row">
       <el-switch v-model="linkMode" active-text="关联 Creation" inactive-text="直接翻译" @change="handleLinkModeChange" />
     </div>
 
-    <div class="route-selector">
-      <span class="route-label">翻译路线</span>
-      <el-radio-group v-model="confirmationMode">
-        <el-radio value="direct">直接生成</el-radio>
-        <el-radio value="confirmation">确认后生成</el-radio>
-      </el-radio-group>
-    </div>
-
-    <div v-if="linkMode" class="link-selector">
+    <div v-if="linkMode" class="option-row">
       <el-select
         v-model="selectedCreationId"
         placeholder="选择作品"
@@ -195,13 +188,62 @@ async function handleUpload(options: UploadRequestOptions) {
       </el-select>
     </div>
 
+    <!-- 翻译模式 -->
+    <div class="option-row">
+      <span class="option-label">翻译模式</span>
+      <div class="check-tags">
+        <el-tooltip content="翻译完成后先人工确认译文，确认后再生成文件" placement="top">
+          <div
+            class="check-tag"
+            :class="{ active: confirmationMode === 'confirmation' }"
+            @click="confirmationMode = 'confirmation'"
+          >
+            <el-icon v-if="confirmationMode === 'confirmation'" class="check-icon"><Check /></el-icon>
+            <span>需要人工确认</span>
+          </div>
+        </el-tooltip>
+        <el-tooltip content="翻译完成后直接生成文件，无需人工确认" placement="top">
+          <div
+            class="check-tag"
+            :class="{ active: confirmationMode === 'direct' }"
+            @click="confirmationMode = 'direct'"
+          >
+            <el-icon v-if="confirmationMode === 'direct'" class="check-icon"><Check /></el-icon>
+            <span>全自动</span>
+          </div>
+        </el-tooltip>
+      </div>
+    </div>
+
+    <!-- Prompt 设置 -->
     <div class="prompt-section">
       <div class="prompt-label">Prompt 设置</div>
-      <el-radio-group v-model="promptMode" @change="handlePromptModeChange">
-        <el-radio value="default">默认 Prompt</el-radio>
-        <el-radio value="select">选择已有</el-radio>
-        <el-radio value="new">新建 Prompt</el-radio>
-      </el-radio-group>
+      <div class="check-tags">
+        <div
+          class="check-tag"
+          :class="{ active: promptMode === 'default' }"
+          @click="handlePromptModeChange('default'); promptMode = 'default'"
+        >
+          <el-icon v-if="promptMode === 'default'" class="check-icon"><Check /></el-icon>
+          <span>默认 Prompt</span>
+        </div>
+        <div
+          class="check-tag"
+          :class="{ active: promptMode === 'select' }"
+          @click="handlePromptModeChange('select'); promptMode = 'select'"
+        >
+          <el-icon v-if="promptMode === 'select'" class="check-icon"><Check /></el-icon>
+          <span>选择已有</span>
+        </div>
+        <div
+          class="check-tag"
+          :class="{ active: promptMode === 'new' }"
+          @click="handlePromptModeChange('new'); promptMode = 'new'"
+        >
+          <el-icon v-if="promptMode === 'new'" class="check-icon"><Check /></el-icon>
+          <span>新建 Prompt</span>
+        </div>
+      </div>
 
       <div v-if="promptMode === 'select'" class="prompt-select">
         <el-select
@@ -253,28 +295,53 @@ async function handleUpload(options: UploadRequestOptions) {
   margin: 0 auto;
 }
 
-.upload-mode {
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.route-selector {
+.option-row {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 12px;
   margin-bottom: 12px;
 }
 
-.route-label {
+.option-label {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+  flex-shrink: 0;
 }
 
-.link-selector {
+.check-tags {
   display: flex;
-  justify-content: center;
-  margin-bottom: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.check-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.check-tag:hover {
+  border-color: var(--el-color-primary-light-3);
+  color: var(--el-color-primary);
+}
+
+.check-tag.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.check-icon {
+  font-size: 14px;
 }
 
 .prompt-section {

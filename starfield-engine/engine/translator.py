@@ -105,6 +105,7 @@ class Translator:
         custom_prompt: Optional[str] = None,
         dictionary_entries: Optional[List[Dict]] = None,
         callback_url: str | None = None,
+        skip_cache: bool = False,
     ) -> Dict[str, str]:
         """提交翻译任务并异步执行。
 
@@ -115,18 +116,19 @@ class Translator:
             custom_prompt: 用户自定义 Prompt。
             dictionary_entries: 词典词条列表。
             callback_url: 进度回调地址。
+            skip_cache: 是否跳过缓存保存（confirmation 模式下为 True）。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s", task_id, file_path)
+        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s", task_id, file_path, skip_cache)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url),
+            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache),
             daemon=True,
         )
         thread.start()
@@ -141,6 +143,7 @@ class Translator:
         custom_prompt: Optional[str],
         dictionary_entries: Optional[List[Dict]],
         callback_url: str | None = None,
+        skip_cache: bool = False,
     ) -> None:
         """执行翻译任务的完整流程：解析 → 缓存查询 → 翻译 → 缓存保存 → 重组。"""
         try:
@@ -174,6 +177,10 @@ class Translator:
             for r in uncached_records:
                 parts = r.record_id.rsplit(":", 1)
                 sub_type = parts[-1] if len(parts) > 1 else ""
+                # 去掉 #N 序号后缀用于去重匹配
+                idx = sub_type.find("#")
+                if idx >= 0:
+                    sub_type = sub_type[:idx]
                 key = (sub_type, r.text)
                 if key not in seen_keys:
                     seen_keys[key] = r.record_id
@@ -220,22 +227,27 @@ class Translator:
                     self._report_progress(task_id, callback_url)
 
                 def on_batch_translated(batch_result: dict, batch_records: list) -> None:
-                    """每批翻译完成后立即保存缓存，并上报 items 供 confirmation 模式使用。"""
-                    save_cache(batch_result, batch_records, target_lang, task_id)
-                    # 构建 items 列表用于 confirmation 模式增量写入
+                    """每批翻译完成后立即保存缓存（除非 skip_cache），并上报 items 供 confirmation 模式使用。"""
+                    if not skip_cache:
+                        save_cache(batch_result, batch_records, target_lang, task_id)
+                    # 构建 items 列表用于 confirmation 模式增量写入（包含去重展开的记录）
+                    records_by_id = {r.record_id: r for r in uncached_records}
                     items = []
                     for rec in batch_records:
                         translated = batch_result.get(rec.record_id)
                         if translated:
-                            # record_id 格式: RECORD_TYPE:FORM_ID:SUBRECORD_TYPE
-                            parts = rec.record_id.split(":", 2)
-                            record_type = parts[0] if len(parts) > 0 else ""
-                            items.append({
-                                "recordId": rec.record_id,
-                                "recordType": record_type,
-                                "sourceText": rec.text,
-                                "targetText": translated,
-                            })
+                            # 展开 dedup_map 中所有重复的 record_id
+                            for rid in dedup_map.get(rec.record_id, [rec.record_id]):
+                                parts = rid.split(":", 2)
+                                record_type = parts[0] if len(parts) > 0 else ""
+                                source_rec = records_by_id.get(rid)
+                                source_text = source_rec.text if source_rec else rec.text
+                                items.append({
+                                    "recordId": rid,
+                                    "recordType": record_type,
+                                    "sourceText": source_text,
+                                    "targetText": translated,
+                                })
                     if items:
                         self._report_progress(task_id, callback_url, items=items)
 
@@ -259,7 +271,35 @@ class Translator:
 
             # 5. 合并缓存结果和 LLM 结果
             translations = {**cached, **new_translations}
+
+            # 5.5 补全翻译失败的词条（用原文回退），确保每个可翻译词条都有对应结果
+            missing_count = 0
+            for r in records:
+                if r.record_id not in translations:
+                    translations[r.record_id] = r.text
+                    missing_count += 1
+            if missing_count > 0:
+                logger.warning("[_run_task] 翻译失败词条用原文回退 task_id %s missing_count %d", task_id, missing_count)
+
             self._update_progress(task_id, len(translations), total)
+
+            # 5.6 汇总上报所有词条（确保 confirmation 模式下每个词条都写入确认记录）
+            records_by_id = {r.record_id: r for r in records}
+            all_items = []
+            for rid, translated in translations.items():
+                rec = records_by_id.get(rid)
+                if rec:
+                    parts = rid.split(":", 2)
+                    record_type = parts[0] if len(parts) > 0 else ""
+                    all_items.append({
+                        "recordId": rid,
+                        "recordType": record_type,
+                        "sourceText": rec.text,
+                        "targetText": translated,
+                    })
+            if all_items:
+                logger.info("[_run_task] 汇总上报所有词条 task_id %s count %d", task_id, len(all_items))
+                self._report_progress(task_id, callback_url, items=all_items)
 
             # 6. 重组 ESM
             self._update_status(task_id, STATUS_ASSEMBLING)

@@ -41,10 +41,15 @@ def _rewrite_subrecords(
 ) -> bytes:
     """重写记录内的子记录，替换已翻译的文本。
 
+    同一 form_id 下多个同类型子记录通过序号区分：
+    第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
+    后续为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#1、#2 等。
+
     返回重写后的子记录字节数据。
     """
     parts: list[bytes] = []
     offset = 0
+    sub_type_counts: dict[bytes, int] = {}
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -65,7 +70,13 @@ def _rewrite_subrecords(
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
         if is_translatable and sub_size > 0:
-            record_id = _build_record_id(record_type, form_id, sub_type)
+            count = sub_type_counts.get(sub_type, 0)
+            if count == 0:
+                record_id = _build_record_id(record_type, form_id, sub_type)
+            else:
+                record_id = _build_record_id(record_type, form_id, sub_type) + f"#{count}"
+            sub_type_counts[sub_type] = count + 1
+
             if record_id in translations:
                 new_text = translations[record_id]
                 new_data = new_text.encode("utf-8") + b"\x00"

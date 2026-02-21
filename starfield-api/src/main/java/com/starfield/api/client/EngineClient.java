@@ -43,7 +43,8 @@ public interface EngineClient {
             String targetLang,
             String customPrompt,
             List<DictionaryEntryDto> dictionaryEntries,
-            String callbackUrl
+            String callbackUrl,
+            Boolean skipCache
     ) {}
 
     record DictionaryEntryDto(

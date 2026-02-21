@@ -82,9 +82,15 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
     判断逻辑：
     1. 子记录类型在 TRANSLATABLE_SUBRECORD_TYPES 中（任意记录类型下都翻译）
     2. (记录类型, 子记录类型) 组合在 TRANSLATABLE_COMBINATIONS 中
+
+    同一 form_id 下多个同类型子记录通过序号区分：
+    第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
+    后续为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#1、#2 等。
     """
     records = []
     offset = 0
+    # 统计同一 form_id 下每种子记录类型出现的次数，用于生成唯一 record_id
+    sub_type_counts: dict[bytes, int] = {}
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -113,7 +119,12 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
         if is_translatable and sub_size > 0:
             text = _decode_text(data[offset : offset + sub_size])
             if text and _is_printable_text(text):
-                record_id = _build_record_id(record_type, form_id, sub_type)
+                count = sub_type_counts.get(sub_type, 0)
+                if count == 0:
+                    record_id = _build_record_id(record_type, form_id, sub_type)
+                else:
+                    record_id = _build_record_id(record_type, form_id, sub_type) + f"#{count}"
+                sub_type_counts[sub_type] = count + 1
                 records.append(StringRecord(record_id=record_id, text=text))
 
         offset += sub_size

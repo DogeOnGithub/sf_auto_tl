@@ -119,6 +119,9 @@ async function handleExpire() {
       <el-button type="warning" size="small" @click="emit('open-confirmation', task.taskId, task.fileName)">
         进入翻译确认
       </el-button>
+      <el-button type="danger" size="small" :icon="Delete" @click="handleExpire()">
+        放弃
+      </el-button>
     </div>
 
     <div v-if="task.status === 'completed'" class="task-actions">

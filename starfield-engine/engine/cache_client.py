@@ -24,11 +24,17 @@ def _extract_record_type(record_id: str) -> str:
 
 
 def _extract_subrecord_type(record_id: str) -> str:
-    """从 record_id 中提取 subrecord_type（最后一个冒号后的部分）。
+    """从 record_id 中提取 subrecord_type（最后一个冒号后的部分，去掉 #N 序号后缀）。
 
     例如 "RFGP:0100448A:RNAM" → "RNAM"
+    例如 "TMLM:0100448A:ITXT#1" → "ITXT"
     """
-    return record_id.rsplit(":", 1)[-1]
+    sub = record_id.rsplit(":", 1)[-1]
+    # 去掉 #N 序号后缀
+    idx = sub.find("#")
+    if idx >= 0:
+        sub = sub[:idx]
+    return sub
 
 
 def query_cache(records: List[StringRecord], target_lang: str) -> Dict[str, str]:

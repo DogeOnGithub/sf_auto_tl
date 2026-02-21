@@ -5,6 +5,7 @@ import { getTask, getTasksPaged, batchExpireTasks } from '@/services/taskApi'
 import { useStarborn } from '@/composables/useStarborn'
 import type { TaskResponse } from '@/types'
 import TaskCard from './TaskCard.vue'
+import ConfirmationDrawer from './ConfirmationDrawer.vue'
 import { Loading, Delete } from '@element-plus/icons-vue'
 
 const { isStarborn } = useStarborn()
@@ -21,7 +22,12 @@ const total = ref(0)
 /** 勾选状态 */
 const selectedIds = ref<Set<string>>(new Set())
 
-const terminalStatuses = new Set(['completed', 'failed', 'expired'])
+/** 确认抽屉状态 */
+const confirmationVisible = ref(false)
+const confirmationTaskId = ref('')
+const confirmationFileName = ref('')
+
+const terminalStatuses = new Set(['completed', 'failed', 'expired', 'pending_confirmation'])
 
 function isTerminal(status: string): boolean {
   return terminalStatuses.has(status)
@@ -30,7 +36,7 @@ function isTerminal(status: string): boolean {
 /** 当前页可清理的任务 ID 列表 */
 const expirableIds = computed(() =>
   tasks.value
-    .filter((t) => t.status === 'completed' || t.status === 'failed')
+    .filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'pending_confirmation')
     .map((t) => t.taskId)
 )
 
@@ -63,9 +69,9 @@ function toggleSelect(taskId: string, val: boolean) {
   }
 }
 
-/** 任务是否可勾选（completed/failed 且未关联 creation） */
+/** 任务是否可勾选（completed/failed/pending_confirmation 且未关联 creation） */
 function isExpirable(task: TaskResponse): boolean {
-  return (task.status === 'completed' || task.status === 'failed') && !task.creation
+  return (task.status === 'completed' || task.status === 'failed' || task.status === 'pending_confirmation') && !task.creation
 }
 
 function stopPolling(taskId: string) {
@@ -151,6 +157,18 @@ async function handleBatchExpire() {
   } catch { /* 取消 */ }
 }
 
+/** 打开翻译确认抽屉 */
+function handleOpenConfirmation(taskId: string, fileName: string) {
+  confirmationTaskId.value = taskId
+  confirmationFileName.value = fileName
+  confirmationVisible.value = true
+}
+
+/** 文件生成完成后刷新任务列表 */
+function handleGenerated() {
+  loadTasks()
+}
+
 onMounted(() => {
   loadTasks()
 })
@@ -190,7 +208,7 @@ onUnmounted(() => {
         @change="(val: boolean) => toggleSelect(task.taskId, val)"
       />
       <div v-else-if="isStarborn" class="task-checkbox-placeholder" />
-      <TaskCard class="task-card-item" :task="task" @task-expired="handleTaskExpired" />
+      <TaskCard class="task-card-item" :task="task" @task-expired="handleTaskExpired" @open-confirmation="handleOpenConfirmation" />
     </div>
 
     <el-empty v-if="!loading && tasks.length === 0" description="暂无翻译历史" :image-size="80" />
@@ -208,6 +226,13 @@ onUnmounted(() => {
         @current-change="handlePageChange"
       />
     </div>
+
+    <ConfirmationDrawer
+      v-model:visible="confirmationVisible"
+      :task-id="confirmationTaskId"
+      :file-name="confirmationFileName"
+      @generated="handleGenerated"
+    />
   </div>
 </template>
 

@@ -37,8 +37,9 @@ def create_app() -> Flask:
         custom_prompt = data.get("customPrompt")
         dictionary_entries = data.get("dictionaryEntries")
         callback_url = data.get("callbackUrl")
+        skip_cache = data.get("skipCache", False)
 
-        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s", task_id, file_path)
+        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s", task_id, file_path, skip_cache)
 
         result = translator.submit_task(
             task_id=task_id,
@@ -47,6 +48,7 @@ def create_app() -> Flask:
             custom_prompt=custom_prompt,
             dictionary_entries=dictionary_entries,
             callback_url=callback_url,
+            skip_cache=skip_cache,
         )
         return jsonify(result), 202
 

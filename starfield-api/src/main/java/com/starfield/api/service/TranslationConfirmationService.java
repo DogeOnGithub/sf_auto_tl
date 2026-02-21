@@ -52,7 +52,25 @@ public class TranslationConfirmationService {
     public void saveConfirmationRecords(String taskId, List<ConfirmationSaveItem> items) {
         log.info("[saveConfirmationRecords] 保存确认记录 taskId {} itemsSize {}", taskId, items.size());
 
-        var entities = items.stream()
+        // 查询已存在的 recordId 集合 避免重复插入
+        var existingRecordIds = confirmationRepository.selectList(
+                new LambdaQueryWrapper<TranslationConfirmation>()
+                        .eq(TranslationConfirmation::getTaskId, taskId)
+                        .select(TranslationConfirmation::getRecordId)
+        ).stream()
+                .map(TranslationConfirmation::getRecordId)
+                .collect(Collectors.toSet());
+
+        var newItems = items.stream()
+                .filter(item -> !existingRecordIds.contains(item.recordId()))
+                .collect(Collectors.toList());
+
+        if (newItems.isEmpty()) {
+            log.info("[saveConfirmationRecords] 无新增记录 taskId {} 全部已存在", taskId);
+            return;
+        }
+
+        var entities = newItems.stream()
                 .map(item -> {
                     var entity = new TranslationConfirmation();
                     entity.setTaskId(taskId);
@@ -71,7 +89,7 @@ public class TranslationConfirmationService {
             confirmationRepository.insert(entity);
         }
 
-        log.info("[saveConfirmationRecords] 保存完成 taskId {} count {}", taskId, entities.size());
+        log.info("[saveConfirmationRecords] 保存完成 taskId {} newCount {} skippedCount {}", taskId, newItems.size(), items.size() - newItems.size());
     }
 
     /**
@@ -108,6 +126,18 @@ public class TranslationConfirmationService {
                 .collect(Collectors.toList());
 
         return new ConfirmationPageResponse(records, pageResult.getTotal(), pageResult.getCurrent(), pageResult.getPages());
+    }
+    /**
+     * 统计指定任务的确认记录总数
+     *
+     * @param taskId 任务 ID
+     * @return 确认记录数
+     */
+    public long countByTaskId(String taskId) {
+        return confirmationRepository.selectCount(
+                new LambdaQueryWrapper<TranslationConfirmation>()
+                        .eq(TranslationConfirmation::getTaskId, taskId)
+        );
     }
 
     /**
@@ -232,13 +262,22 @@ public class TranslationConfirmationService {
         );
 
         // 将已确认的译文写入翻译缓存
+        // recordId 格式: RECORD_TYPE:FORM_ID:SUBRECORD_TYPE 或 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#N
+        // 从中提取 recordType 和 subrecordType（去掉 #N 序号后缀）
         var cacheItems = confirmedRecords.stream()
-                .map(r -> new CacheSaveItem(
-                        "",
-                        r.getRecordType(),
-                        r.getSourceText(),
-                        r.getTargetText()
-                ))
+                .map(r -> {
+                    var parts = r.getRecordId().split(":");
+                    var recordType = parts.length > 0 ? parts[0] : "";
+                    var subrecordTypeFull = parts.length > 2 ? parts[2] : "";
+                    var hashIdx = subrecordTypeFull.indexOf('#');
+                    var subrecordType = hashIdx >= 0 ? subrecordTypeFull.substring(0, hashIdx) : subrecordTypeFull;
+                    return new CacheSaveItem(
+                            recordType,
+                            subrecordType,
+                            r.getSourceText(),
+                            r.getTargetText()
+                    );
+                })
                 .collect(Collectors.toList());
 
         var cacheSaveRequest = new CacheSaveRequest(taskId, task.getTargetLang(), cacheItems);

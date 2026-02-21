@@ -45,6 +45,7 @@ public class TaskService {
     final CreationVersionRepository creationVersionRepository;
     final CreationRepository creationRepository;
     final CustomPromptRepository customPromptRepository;
+    final com.starfield.api.repository.TranslationConfirmationRepository translationConfirmationRepository;
     final EngineClient engineClient;
     final CosService cosService;
     final CosProperties cosProperties;
@@ -179,6 +180,14 @@ public class TaskService {
         // 当任务已经是 assembling（由 generateFile 设置）时不再拦截
         if (isConfirmationMode && newStatus == TaskStatus.assembling && currentStatus != TaskStatus.assembling) {
             log.info("[handleProgressCallback] confirmation 模式拦截 assembling 状态 改为 pending_confirmation taskId {}", taskId);
+
+            // 校验确认记录数与总词条数是否一致
+            var confirmationCount = translationConfirmationService.countByTaskId(taskId);
+            var totalCount = Objects.nonNull(request.progress()) ? request.progress().total() : 0;
+            if (confirmationCount != totalCount) {
+                log.warn("[handleProgressCallback] 确认记录数与总词条数不一致 taskId {} confirmationCount {} totalCount {}", taskId, confirmationCount, totalCount);
+            }
+
             task.setStatus(TaskStatus.pending_confirmation);
 
             if (Objects.nonNull(request.progress())) {
@@ -615,6 +624,24 @@ public class TaskService {
             log.warn("[expireTask] COS 文件删除失败 taskId {} 继续标记过期", taskId, e);
         }
 
+        // 清理本地文件（原始文件、翻译文件、备份文件）
+        deleteLocalFile(task.getFilePath(), taskId);
+        deleteLocalFile(task.getOutputFilePath(), taskId);
+        deleteLocalFile(task.getOriginalBackupPath(), taskId);
+
+        // 清理确认记录
+        try {
+            var deletedConfirmations = translationConfirmationRepository.delete(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.starfield.api.entity.TranslationConfirmation>()
+                            .eq(com.starfield.api.entity.TranslationConfirmation::getTaskId, taskId)
+            );
+            if (deletedConfirmations > 0) {
+                log.info("[expireTask] 确认记录已清理 taskId {} count {}", taskId, deletedConfirmations);
+            }
+        } catch (Exception e) {
+            log.warn("[expireTask] 确认记录清理失败 taskId {} 继续标记过期", taskId, e);
+        }
+
         task.setStatus(TaskStatus.expired);
         task.setDownloadUrl(null);
         translationTaskRepository.updateById(task);
@@ -696,6 +723,27 @@ public class TaskService {
             log.info("[deleteCosFile] COS 文件已删除 taskId {} cosKey {}", task.getTaskId(), cosKey);
         } else {
             log.warn("[deleteCosFile] 下载链接格式不匹配 taskId {} downloadUrl {}", task.getTaskId(), downloadUrl);
+        }
+    }
+
+    /**
+     * 删除本地文件（静默处理异常）
+     *
+     * @param filePath 文件路径
+     * @param taskId   任务 ID（用于日志）
+     */
+    private void deleteLocalFile(String filePath, String taskId) {
+        if (Objects.isNull(filePath) || filePath.isBlank()) {
+            return;
+        }
+        try {
+            var path = Paths.get(filePath);
+            if (Files.exists(path)) {
+                Files.delete(path);
+                log.info("[deleteLocalFile] 本地文件已删除 taskId {} path {}", taskId, filePath);
+            }
+        } catch (Exception e) {
+            log.warn("[deleteLocalFile] 本地文件删除失败 taskId {} path {}", taskId, filePath, e);
         }
     }
 

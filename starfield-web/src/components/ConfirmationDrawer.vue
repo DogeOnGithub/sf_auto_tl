@@ -32,9 +32,11 @@ const statusFilter = ref('')
 const keyword = ref('')
 const selectedIds = ref<number[]>([])
 
-/** 编辑相关 */
-const editingId = ref<number | null>(null)
+/** 编辑弹窗相关 */
+const dialogVisible = ref(false)
+const editingEntry = ref<ConfirmationRecord | null>(null)
 const editingText = ref('')
+const submitting = ref(false)
 
 /** 统计 */
 const pendingCount = computed(() => records.value.filter(r => r.status === 'pending').length)
@@ -75,6 +77,13 @@ function handleSearch() {
   loadData()
 }
 
+/** 切换状态过滤 */
+function setStatusFilter(val: string) {
+  statusFilter.value = val
+  currentPage.value = 1
+  loadData()
+}
+
 /** 分页变化 */
 function handlePageChange(page: number) {
   currentPage.value = page
@@ -92,28 +101,28 @@ function handleSelectionChange(rows: ConfirmationRecord[]) {
   selectedIds.value = rows.map(r => r.id)
 }
 
-/** 开始编辑 */
-function startEdit(row: ConfirmationRecord) {
-  editingId.value = row.id
+/** 打开编辑弹窗 */
+function openEditDialog(row: ConfirmationRecord) {
+  editingEntry.value = row
   editingText.value = row.targetText
+  dialogVisible.value = true
 }
 
 /** 保存编辑 */
-async function saveEdit(row: ConfirmationRecord) {
+async function saveEdit() {
+  if (!editingEntry.value) return
+  submitting.value = true
   try {
-    var updated = await updateTargetText(row.id, editingText.value)
-    row.targetText = updated.targetText
-    row.updatedAt = updated.updatedAt
-    editingId.value = null
+    var updated = await updateTargetText(editingEntry.value.id, editingText.value)
+    editingEntry.value.targetText = updated.targetText
+    editingEntry.value.updatedAt = updated.updatedAt
+    dialogVisible.value = false
     ElMessage.success('译文已更新')
   } catch {
     ElMessage.error('更新失败')
+  } finally {
+    submitting.value = false
   }
-}
-
-/** 取消编辑 */
-function cancelEdit() {
-  editingId.value = null
 }
 
 /** 逐条确认 */
@@ -185,8 +194,8 @@ function handleClose() {
       <div class="drawer-header">
         <span class="drawer-title">翻译确认 - {{ fileName }}</span>
         <div class="drawer-stats">
-          <el-tag type="warning" size="small">待确认 {{ pendingCount }}</el-tag>
-          <el-tag type="success" size="small">已确认 {{ confirmedCount }}</el-tag>
+          <el-tag type="warning" size="small">待确认 {{ pendingCount }} (当前页)</el-tag>
+          <el-tag type="success" size="small">已确认 {{ confirmedCount }} (当前页)</el-tag>
           <el-tag size="small">共 {{ total }} 条</el-tag>
         </div>
       </div>
@@ -201,11 +210,11 @@ function handleClose() {
         @keyup.enter="handleSearch"
         @clear="handleSearch"
       />
-      <el-select v-model="statusFilter" placeholder="状态过滤" clearable style="width: 140px" @change="handleSearch">
-        <el-option label="待确认" value="pending" />
-        <el-option label="已确认" value="confirmed" />
-      </el-select>
-      <el-button @click="handleSearch">搜索</el-button>
+      <div class="status-filters">
+        <el-check-tag :checked="statusFilter === ''" @change="setStatusFilter('')">全部</el-check-tag>
+        <el-check-tag :checked="statusFilter === 'pending'" @change="setStatusFilter('pending')">待确认</el-check-tag>
+        <el-check-tag :checked="statusFilter === 'confirmed'" @change="setStatusFilter('confirmed')">已确认</el-check-tag>
+      </div>
       <div class="toolbar-right">
         <el-button :disabled="selectedIds.length === 0" @click="handleBatchConfirm">
           确认选中 ({{ selectedIds.length }})
@@ -223,25 +232,17 @@ function handleClose() {
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="recordType" label="类型" width="100" />
-      <el-table-column prop="sourceText" label="原文" min-width="200" show-overflow-tooltip />
-      <el-table-column label="译文" min-width="200">
+      <el-table-column label="类型" width="140">
         <template #default="{ row }">
-          <div v-if="editingId === row.id" class="edit-cell">
-            <el-input
-              v-model="editingText"
-              type="textarea"
-              :autosize="{ minRows: 1, maxRows: 4 }"
-              size="small"
-            />
-            <div class="edit-actions">
-              <el-button size="small" type="primary" @click="saveEdit(row)">保存</el-button>
-              <el-button size="small" @click="cancelEdit">取消</el-button>
-            </div>
-          </div>
-          <div v-else class="text-cell" @dblclick="startEdit(row)">
+          <span>{{ row.recordType }} → {{ row.recordId.split(':')[2] || '' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="sourceText" label="原文" min-width="200" show-overflow-tooltip />
+      <el-table-column label="译文" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          <div class="text-cell">
             <span>{{ row.targetText }}</span>
-            <el-button :icon="EditPen" size="small" link @click="startEdit(row)" />
+            <el-button :icon="EditPen" size="small" link @click="openEditDialog(row)" />
           </div>
         </template>
       </el-table-column>
@@ -279,6 +280,27 @@ function handleClose() {
       />
     </div>
   </el-drawer>
+
+  <el-dialog v-model="dialogVisible" title="编辑译文" width="560px" append-to-body>
+    <div v-if="editingEntry" class="edit-form">
+      <div class="edit-row">
+        <span class="edit-label">类型</span>
+        <span>{{ editingEntry.recordType }} → {{ editingEntry.recordId.split(':')[2] || '' }}</span>
+      </div>
+      <div class="edit-row">
+        <span class="edit-label">原文</span>
+        <span>{{ editingEntry.sourceText }}</span>
+      </div>
+      <div class="edit-row">
+        <span class="edit-label">译文</span>
+        <el-input v-model="editingText" type="textarea" :rows="3" placeholder="请输入译文" />
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="dialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="submitting" @click="saveEdit">确定</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -313,13 +335,7 @@ function handleClose() {
   gap: 8px;
 }
 
-.edit-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.edit-actions {
+.status-filters {
   display: flex;
   gap: 4px;
 }
@@ -328,11 +344,31 @@ function handleClose() {
   display: flex;
   align-items: center;
   gap: 4px;
-  cursor: pointer;
 }
 
 .text-cell span {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.edit-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.edit-label {
+  min-width: 40px;
+  color: var(--el-text-color-secondary);
+  flex-shrink: 0;
 }
 
 .drawer-pagination {

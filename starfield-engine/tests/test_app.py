@@ -62,6 +62,7 @@ class TestPostTranslate:
             custom_prompt="自定义",
             dictionary_entries=entries,
             callback_url=None,
+            skip_cache=False,
         )
 
     def test_submit_missing_task_id_returns_400(self, client):

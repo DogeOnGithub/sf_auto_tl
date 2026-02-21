@@ -199,13 +199,15 @@ public class FileUploadService {
 
             var absoluteFilePath = Paths.get(task.getFilePath()).toAbsolutePath().toString();
             var callbackUrl = apiBaseUrl + "/api/tasks/" + task.getTaskId() + "/progress";
+            var skipCache = "confirmation".equals(task.getConfirmationMode());
             var request = new EngineClient.EngineTranslateRequest(
                     task.getTaskId(),
                     absoluteFilePath,
                     task.getTargetLang(),
                     customPrompt,
                     dictionaryEntries,
-                    callbackUrl
+                    callbackUrl,
+                    skipCache
             );
 
             engineClient.submitTranslation(request);
