@@ -10,6 +10,7 @@ export interface TaskResponse {
   taskId: string
   fileName: string
   status: string
+  confirmationMode: string
   progress: { translated: number; total: number }
   creation: TaskCreationInfo | null
   prompt: { id: number; name: string } | null
@@ -123,6 +124,25 @@ export interface CachePageResponse {
 
 export interface TaskPageResponse {
   records: TaskResponse[]
+  total: number
+  current: number
+  pages: number
+}
+
+export interface ConfirmationRecord {
+  id: number
+  taskId: string
+  recordId: string
+  recordType: string
+  sourceText: string
+  targetText: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ConfirmationPageResponse {
+  records: ConfirmationRecord[]
   total: number
   current: number
   pages: number

@@ -58,6 +58,32 @@ def create_app() -> Flask:
             return jsonify({"error": "TASK_NOT_FOUND", "message": "翻译任务不存在"}), 404
         return jsonify(task), 200
 
+    @app.post("/engine/assembly")
+    def submit_assembly():
+        """提交组装任务（仅重组阶段，使用已确认的翻译结果）。"""
+        data = request.get_json(silent=True)
+        if data is None:
+            return jsonify({"error": "INVALID_REQUEST", "message": "请求体必须为 JSON"}), 400
+
+        task_id = data.get("taskId")
+        file_path = data.get("filePath")
+        items = data.get("items")
+
+        if not task_id or not file_path or not items:
+            return jsonify({"error": "MISSING_PARAMS", "message": "taskId、filePath 和 items 为必填参数"}), 400
+
+        callback_url = data.get("callbackUrl")
+
+        logger.info("[submit_assembly] 收到组装请求 task_id %s items_count %d", task_id, len(items))
+
+        result = translator.submit_assembly(
+            task_id=task_id,
+            file_path=file_path,
+            items=items,
+            callback_url=callback_url,
+        )
+        return jsonify(result), 202
+
     return app
 
 

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.client.EngineClient;
 import com.starfield.api.config.CosProperties;
+import com.starfield.api.dto.ConfirmationSaveItem;
 import com.starfield.api.dto.ProgressCallbackRequest;
 import com.starfield.api.dto.TaskPageResponse;
 import com.starfield.api.dto.TaskResponse;
@@ -47,6 +48,7 @@ public class TaskService {
     final EngineClient engineClient;
     final CosService cosService;
     final CosProperties cosProperties;
+    final TranslationConfirmationService translationConfirmationService;
 
     @Value("${storage.upload-dir:./uploads}")
     private String uploadDir;
@@ -155,12 +157,41 @@ public class TaskService {
         }
 
         var currentStatus = task.getStatus();
-        if (currentStatus == TaskStatus.completed || currentStatus == TaskStatus.failed) {
+        if (currentStatus == TaskStatus.completed || currentStatus == TaskStatus.failed || currentStatus == TaskStatus.pending_confirmation) {
             log.info("[handleProgressCallback] 任务已终态 跳过 taskId {} status {}", taskId, currentStatus);
             return;
         }
 
         var newStatus = TaskStatus.valueOf(request.status());
+        var isConfirmationMode = "confirmation".equals(task.getConfirmationMode());
+
+        // confirmation 模式下 收到 items 时增量写入 translation_confirmation 表
+        if (isConfirmationMode && Objects.nonNull(request.items()) && !request.items().isEmpty()) {
+            var saveItems = request.items().stream()
+                    .map(item -> new ConfirmationSaveItem(
+                            item.recordId(), item.recordType(), item.sourceText(), item.targetText()))
+                    .collect(Collectors.toList());
+            translationConfirmationService.saveConfirmationRecords(taskId, saveItems);
+            log.info("[handleProgressCallback] confirmation 模式增量写入确认记录 taskId {} count {}", taskId, saveItems.size());
+        }
+
+        // confirmation 模式下 翻译阶段引擎回调 assembling 状态时拦截 改为 pending_confirmation
+        // 当任务已经是 assembling（由 generateFile 设置）时不再拦截
+        if (isConfirmationMode && newStatus == TaskStatus.assembling && currentStatus != TaskStatus.assembling) {
+            log.info("[handleProgressCallback] confirmation 模式拦截 assembling 状态 改为 pending_confirmation taskId {}", taskId);
+            task.setStatus(TaskStatus.pending_confirmation);
+
+            if (Objects.nonNull(request.progress())) {
+                task.setTranslatedCount(request.progress().translated());
+                task.setTotalCount(request.progress().total());
+            }
+
+            task.setSyncFailCount(0);
+            translationTaskRepository.updateById(task);
+            return;
+        }
+
+        // direct 模式或其他状态 保持原有逻辑
         if (newStatus != task.getStatus()) {
             log.info("[handleProgressCallback] 状态变更 taskId {} {} -> {}", taskId, task.getStatus(), newStatus);
             task.setStatus(newStatus);
@@ -218,6 +249,7 @@ public class TaskService {
                 task.getTaskId(),
                 task.getFileName(),
                 task.getStatus().name(),
+                task.getConfirmationMode(),
                 new TaskResponse.Progress(task.getTranslatedCount(), task.getTotalCount()),
                 creationInfo,
                 promptInfo,
@@ -250,7 +282,7 @@ public class TaskService {
      */
     public void syncActiveTasksFromEngine() {
         var wrapper = new QueryWrapper<TranslationTask>()
-                .notIn("status", TaskStatus.completed.name(), TaskStatus.failed.name(), TaskStatus.expired.name());
+                .notIn("status", TaskStatus.completed.name(), TaskStatus.failed.name(), TaskStatus.expired.name(), TaskStatus.pending_confirmation.name());
         var activeTasks = translationTaskRepository.selectList(wrapper);
         log.info("[syncActiveTasksFromEngine] 活跃任务数 {}", activeTasks.size());
         activeTasks.forEach(this::syncProgressFromEngine);
@@ -266,7 +298,7 @@ public class TaskService {
      */
     private void syncProgressFromEngine(TranslationTask task) {
         var status = task.getStatus();
-        if (status == TaskStatus.completed || status == TaskStatus.failed) {
+        if (status == TaskStatus.completed || status == TaskStatus.failed || status == TaskStatus.pending_confirmation) {
             return;
         }
 

@@ -147,6 +147,22 @@ public class TranslationCacheService {
     }
 
     /**
+     * 根据任务 ID 删除所有关联的缓存记录
+     *
+     * @param taskId 任务 ID
+     * @return 删除的记录数
+     */
+    public long deleteByTaskId(String taskId) {
+        log.info("[deleteByTaskId] 根据任务ID删除缓存 taskId {}", taskId);
+        var wrapper = new LambdaQueryWrapper<TranslationCache>()
+                .eq(TranslationCache::getTaskId, taskId);
+        var count = translationCacheRepository.delete(wrapper);
+        log.info("[deleteByTaskId] 删除完成 taskId {} count {}", taskId, count);
+        return count;
+    }
+
+
+    /**
      * 查询单条词条的缓存命中情况
      */
     private CacheQueryResultItem queryItem(CacheQueryItem item, String targetLang) {

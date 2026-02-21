@@ -76,15 +76,24 @@ class Translator:
                 return None
             return dict(task, progress=dict(task["progress"]))
 
-    def _report_progress(self, task_id: str, callback_url: str | None) -> None:
-        """向 Backend 上报当前任务进度。"""
+    def _report_progress(self, task_id: str, callback_url: str | None, items: list | None = None) -> None:
+        """向 Backend 上报当前任务进度。
+
+        Args:
+            task_id: 任务 ID。
+            callback_url: 回调地址。
+            items: 本批次翻译结果条目列表（可选），用于 confirmation 模式增量写入。
+        """
         if not callback_url:
             return
         task = self.get_task(task_id)
         if task is None:
             return
+        payload = dict(task)
+        if items:
+            payload["items"] = items
         try:
-            requests.post(callback_url, json=task, timeout=30)
+            requests.post(callback_url, json=payload, timeout=30)
         except Exception as e:
             logger.warning("[_report_progress] 上报进度失败 task_id %s error %s", task_id, str(e))
 
@@ -180,6 +189,24 @@ class Translator:
             # 缓存命中的词条计入已翻译进度
             self._update_progress(task_id, cached_count, total)
 
+            # 上报缓存命中的词条作为 items（供 confirmation 模式写入确认记录）
+            if cached:
+                cached_items = []
+                records_by_id = {r.record_id: r for r in records}
+                for rid, translated in cached.items():
+                    rec = records_by_id.get(rid)
+                    if rec:
+                        parts = rid.split(":", 2)
+                        record_type = parts[0] if len(parts) > 0 else ""
+                        cached_items.append({
+                            "recordId": rid,
+                            "recordType": record_type,
+                            "sourceText": rec.text,
+                            "targetText": translated,
+                        })
+                if cached_items:
+                    self._report_progress(task_id, callback_url, items=cached_items)
+
             # 3. 翻译未命中词条
             self._update_status(task_id, STATUS_TRANSLATING)
             self._report_progress(task_id, callback_url)
@@ -193,8 +220,24 @@ class Translator:
                     self._report_progress(task_id, callback_url)
 
                 def on_batch_translated(batch_result: dict, batch_records: list) -> None:
-                    """每批翻译完成后立即保存缓存，避免中途失败丢失已翻译结果。"""
+                    """每批翻译完成后立即保存缓存，并上报 items 供 confirmation 模式使用。"""
                     save_cache(batch_result, batch_records, target_lang, task_id)
+                    # 构建 items 列表用于 confirmation 模式增量写入
+                    items = []
+                    for rec in batch_records:
+                        translated = batch_result.get(rec.record_id)
+                        if translated:
+                            # record_id 格式: RECORD_TYPE:FORM_ID:SUBRECORD_TYPE
+                            parts = rec.record_id.split(":", 2)
+                            record_type = parts[0] if len(parts) > 0 else ""
+                            items.append({
+                                "recordId": rec.record_id,
+                                "recordType": record_type,
+                                "sourceText": rec.text,
+                                "targetText": translated,
+                            })
+                    if items:
+                        self._report_progress(task_id, callback_url, items=items)
 
                 dedup_translations = translate_records(
                     records=dedup_records,
@@ -245,5 +288,79 @@ class Translator:
 
         except Exception as e:
             logger.error("[_run_task] 翻译任务异常 task_id %s error %s", task_id, str(e), exc_info=True)
+            self._set_error(task_id, str(e))
+            self._report_progress(task_id, callback_url)
+
+    def submit_assembly(
+        self,
+        task_id: str,
+        file_path: str,
+        items: List[Dict],
+        callback_url: str | None = None,
+    ) -> Dict[str, str]:
+        """提交组装任务（仅重组阶段，使用已确认的翻译结果）。
+
+        Args:
+            task_id: 任务唯一标识。
+            file_path: 原始 ESM 文件路径。
+            items: 已确认的翻译条目列表，每条包含 recordId 和 targetText。
+            callback_url: 进度回调地址。
+
+        Returns:
+            包含 taskId 和 status 的响应字典。
+        """
+        logger.info("[submit_assembly] 提交组装任务 task_id %s file_path %s items_count %d", task_id, file_path, len(items))
+
+        with self._lock:
+            self._tasks[task_id] = self._new_task(task_id, callback_url)
+
+        thread = threading.Thread(
+            target=self._run_assembly,
+            args=(task_id, file_path, items, callback_url),
+            daemon=True,
+        )
+        thread.start()
+
+        return {"taskId": task_id, "status": "accepted"}
+
+    def _run_assembly(
+        self,
+        task_id: str,
+        file_path: str,
+        items: List[Dict],
+        callback_url: str | None = None,
+    ) -> None:
+        """执行组装任务：将已确认的翻译结果写回 ESM 文件。"""
+        try:
+            translations = {item["recordId"]: item["targetText"] for item in items}
+            total = len(translations)
+            self._update_progress(task_id, total, total)
+
+            self._update_status(task_id, STATUS_ASSEMBLING)
+            self._report_progress(task_id, callback_url)
+            logger.info("[_run_assembly] 开始重组 task_id %s translations_count %d", task_id, total)
+
+            name, ext = file_path.rsplit(".", 1)
+            output_path = f"{name}_translated.{ext}"
+            backup_path = f"{name}_backup.{ext}"
+
+            result = write_esm(
+                original_path=file_path,
+                translations=translations,
+                output_path=output_path,
+                backup_path=backup_path,
+            )
+
+            with self._lock:
+                if task_id in self._tasks:
+                    self._tasks[task_id]["status"] = STATUS_COMPLETED
+                    self._tasks[task_id]["outputFilePath"] = result.output_path
+                    self._tasks[task_id]["originalBackupPath"] = result.backup_path
+
+            self._report_progress(task_id, callback_url)
+            logger.info("[_run_assembly] 组装任务完成 task_id %s", task_id)
+
+        except Exception as e:
+            logger.error("[_run_assembly] 组装任务异常 task_id %s error %s", task_id, str(e), exc_info=True)
             self._set_error(task_id, str(e))
             self._report_progress(task_id, callback_url)

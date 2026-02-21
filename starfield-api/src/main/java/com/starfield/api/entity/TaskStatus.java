@@ -10,6 +10,7 @@ public enum TaskStatus {
     waiting,
     parsing,
     translating,
+    pending_confirmation,
     assembling,
     completed,
     failed,

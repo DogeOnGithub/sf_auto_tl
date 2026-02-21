@@ -53,14 +53,15 @@ public class FileUploadService {
      * @param promptId          选择已有 Prompt 的 ID（可选）
      * @param newPromptName     现场编写的 Prompt 名称（可选）
      * @param newPromptContent  现场编写的 Prompt 内容（可选）
+     * @param confirmationMode  翻译确认模式（direct 或 confirmation，可选，默认 direct）
      * @return 上传响应（taskId + fileName）
      * @throws IOException 文件存储异常
      */
     public FileUploadResponse upload(MultipartFile file, Long creationVersionId,
                                      Long promptId, String newPromptName,
-                                     String newPromptContent) throws IOException {
+                                     String newPromptContent, String confirmationMode) throws IOException {
         var fileName = file.getOriginalFilename();
-        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {}", fileName, creationVersionId);
+        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {}", fileName, creationVersionId, confirmationMode);
 
         validateEsmFormat(file);
 
@@ -69,11 +70,14 @@ public class FileUploadService {
         var taskId = UUID.randomUUID().toString();
         var storedPath = storeFile(file, taskId);
 
+        var resolvedMode = (Objects.isNull(confirmationMode) || confirmationMode.isBlank()) ? "direct" : confirmationMode;
+
         var task = createTask(taskId, fileName, storedPath);
         task.setCreationVersionId(creationVersionId);
         task.setPromptId(resolvedPrompt.id());
+        task.setConfirmationMode(resolvedMode);
         translationTaskRepository.insert(task);
-        log.info("[upload] 任务创建成功 taskId {} promptId {}", taskId, resolvedPrompt.id());
+        log.info("[upload] 任务创建成功 taskId {} promptId {} confirmationMode {}", taskId, resolvedPrompt.id(), resolvedMode);
 
         submitToEngine(task, resolvedPrompt.content());
 

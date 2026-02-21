@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'task-expired': [taskId: string]
+  'open-confirmation': [taskId: string, fileName: string]
 }>()
 
 const { isStarborn } = useStarborn()
@@ -31,6 +32,7 @@ const statusTagType = computed(() => {
     waiting: 'info',
     parsing: 'warning',
     translating: '',
+    pending_confirmation: 'warning',
     assembling: 'warning',
     completed: 'success',
     failed: 'danger',
@@ -45,6 +47,7 @@ const statusLabel = computed(() => {
     waiting: '等待中',
     parsing: '解析中',
     translating: '翻译中',
+    pending_confirmation: '待确认',
     assembling: '重组中',
     completed: '已完成',
     failed: '失败',
@@ -110,6 +113,12 @@ async function handleExpire() {
         :stroke-width="8"
         :format="() => `${task.progress.translated} / ${task.progress.total}`"
       />
+    </div>
+
+    <div v-if="task.status === 'pending_confirmation'" class="task-actions">
+      <el-button type="warning" size="small" @click="emit('open-confirmation', task.taskId, task.fileName)">
+        进入翻译确认
+      </el-button>
     </div>
 
     <div v-if="task.status === 'completed'" class="task-actions">

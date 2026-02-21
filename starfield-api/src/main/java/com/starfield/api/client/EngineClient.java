@@ -28,6 +28,15 @@ public interface EngineClient {
      */
     EngineTaskStatusResponse getTaskStatus(String taskId);
 
+    /**
+     * 向翻译引擎提交组装任务（仅组装阶段，不含翻译）
+     *
+     * @param request 组装请求
+     * @return 引擎组装响应
+     */
+    EngineAssemblyResponse submitAssembly(EngineAssemblyRequest request);
+
+
     record EngineTranslateRequest(
             String taskId,
             String filePath,
@@ -60,4 +69,24 @@ public interface EngineClient {
             int translated,
             int total
     ) {}
+
+    record EngineAssemblyRequest(
+            String taskId,
+            String filePath,
+            List<AssemblyItem> items,
+            String callbackUrl
+    ) {}
+
+    record AssemblyItem(
+            String recordId,
+            String recordType,
+            String sourceText,
+            String targetText
+    ) {}
+
+    record EngineAssemblyResponse(
+            String taskId,
+            String status
+    ) {}
+
 }

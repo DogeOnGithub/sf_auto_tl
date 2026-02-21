@@ -9,6 +9,7 @@ export function uploadFile(
   promptId?: number,
   newPromptName?: string,
   newPromptContent?: string,
+  confirmationMode?: string,
 ): Promise<FileUploadResponse> {
   var formData = new FormData()
   formData.append('file', file)
@@ -23,6 +24,9 @@ export function uploadFile(
   }
   if (newPromptContent) {
     formData.append('newPromptContent', newPromptContent)
+  }
+  if (confirmationMode) {
+    formData.append('confirmationMode', confirmationMode)
   }
   return api
     .post<FileUploadResponse>('/api/files/upload', formData, {

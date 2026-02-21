@@ -24,6 +24,9 @@ const selectedCreationId = ref<number | null>(null)
 const selectedVersionId = ref<number | null>(null)
 const loadingCreations = ref(false)
 
+/** 翻译路线 */
+const confirmationMode = ref<'direct' | 'confirmation'>('direct')
+
 /** Prompt 选择 */
 const promptMode = ref<'default' | 'select' | 'new'>('default')
 const promptList = ref<PromptItem[]>([])
@@ -133,6 +136,7 @@ async function handleUpload(options: UploadRequestOptions) {
       pId,
       pName || undefined,
       pContent || undefined,
+      confirmationMode.value,
     )
     ElMessage.success(`文件 ${result.fileName} 上传成功`)
     emit('upload-success', result)
@@ -150,6 +154,14 @@ async function handleUpload(options: UploadRequestOptions) {
   <div class="file-upload">
     <div class="upload-mode">
       <el-switch v-model="linkMode" active-text="关联 Creation" inactive-text="直接翻译" @change="handleLinkModeChange" />
+    </div>
+
+    <div class="route-selector">
+      <span class="route-label">翻译路线</span>
+      <el-radio-group v-model="confirmationMode">
+        <el-radio value="direct">直接生成</el-radio>
+        <el-radio value="confirmation">确认后生成</el-radio>
+      </el-radio-group>
     </div>
 
     <div v-if="linkMode" class="link-selector">
@@ -244,6 +256,19 @@ async function handleUpload(options: UploadRequestOptions) {
 .upload-mode {
   margin-bottom: 12px;
   text-align: center;
+}
+
+.route-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.route-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .link-selector {

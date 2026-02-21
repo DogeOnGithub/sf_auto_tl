@@ -61,4 +61,25 @@ public class EngineClientImpl implements EngineClient {
             throw new EngineUnavailableException("查询任务状态异常", e);
         }
     }
+
+    /**
+     * 向翻译引擎提交组装任务（仅组装阶段，不含翻译）
+     */
+    @Override
+    public EngineAssemblyResponse submitAssembly(EngineAssemblyRequest request) {
+        var url = engineBaseUrl + "/engine/assembly";
+        log.info("[submitAssembly] 提交组装任务 taskId {}", request.taskId());
+        try {
+            var response = restTemplate.postForObject(url, request, EngineAssemblyResponse.class);
+            log.info("[submitAssembly] 组装任务已提交 taskId {}", request.taskId());
+            return response;
+        } catch (ResourceAccessException e) {
+            log.error("[submitAssembly] 翻译引擎不可用 url {}", url, e);
+            throw new EngineUnavailableException("翻译引擎不可用", e);
+        } catch (Exception e) {
+            log.error("[submitAssembly] 调用翻译引擎异常 taskId {}", request.taskId(), e);
+            throw new EngineUnavailableException("调用翻译引擎异常", e);
+        }
+    }
+
 }

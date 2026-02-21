@@ -1,6 +1,8 @@
 package com.starfield.api.service;
 
 import com.starfield.api.client.EngineClient;
+import com.starfield.api.dto.ConfirmationSaveItem;
+import com.starfield.api.dto.ProgressCallbackRequest;
 import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
 import com.starfield.api.repository.CreationRepository;
@@ -18,6 +20,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,6 +48,9 @@ class TaskServiceTest {
 
     @Mock
     CosService cosService;
+
+    @Mock
+    TranslationConfirmationService translationConfirmationService;
 
     @InjectMocks
     TaskService taskService;
@@ -222,6 +228,104 @@ class TaskServiceTest {
 
         assertThat(Files.exists(filePath)).isFalse();
         assertThat(Files.exists(outputPath)).isFalse();
+    }
+
+    // ========== handleProgressCallback confirmation 模式测试 ==========
+
+    /** confirmation 模式下收到 items 时应增量写入确认记录 */
+    @Test
+    void handleProgressCallback_confirmationModeWithItems_savesConfirmationRecords() {
+        var task = createTask("task-c1", "test.esm", TaskStatus.translating, 3, 10);
+        task.setConfirmationMode("confirmation");
+        when(translationTaskRepository.selectById("task-c1")).thenReturn(task);
+
+        var items = List.of(
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好"),
+                new ProgressCallbackRequest.TranslationItem("r2", "text", "world", "世界")
+        );
+        var request = new ProgressCallbackRequest("task-c1", "translating",
+                new ProgressCallbackRequest.Progress(5, 10), null, null, null, items);
+
+        taskService.handleProgressCallback("task-c1", request);
+
+        verify(translationConfirmationService).saveConfirmationRecords(eq("task-c1"), argThat(saveItems ->
+                saveItems.size() == 2
+                        && saveItems.get(0).recordId().equals("r1")
+                        && saveItems.get(1).recordId().equals("r2")));
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /** confirmation 模式下引擎回调 assembling 时应拦截为 pending_confirmation */
+    @Test
+    void handleProgressCallback_confirmationModeAssembling_interceptsToPendingConfirmation() {
+        var task = createTask("task-c2", "test.esm", TaskStatus.translating, 10, 10);
+        task.setConfirmationMode("confirmation");
+        when(translationTaskRepository.selectById("task-c2")).thenReturn(task);
+
+        var request = new ProgressCallbackRequest("task-c2", "assembling",
+                new ProgressCallbackRequest.Progress(10, 10), null, null, null, null);
+
+        taskService.handleProgressCallback("task-c2", request);
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.pending_confirmation);
+        assertThat(task.getTranslatedCount()).isEqualTo(10);
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /** direct 模式下引擎回调 assembling 时应正常进入 assembling 状态 */
+    @Test
+    void handleProgressCallback_directModeAssembling_proceedsNormally() {
+        var task = createTask("task-c3", "test.esm", TaskStatus.translating, 10, 10);
+        task.setConfirmationMode("direct");
+        when(translationTaskRepository.selectById("task-c3")).thenReturn(task);
+
+        var request = new ProgressCallbackRequest("task-c3", "assembling",
+                new ProgressCallbackRequest.Progress(10, 10), null, null, null, null);
+
+        taskService.handleProgressCallback("task-c3", request);
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.assembling);
+        verify(translationConfirmationService, never()).saveConfirmationRecords(any(), any());
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /** direct 模式下收到 items 时不应写入确认记录 */
+    @Test
+    void handleProgressCallback_directModeWithItems_doesNotSaveConfirmationRecords() {
+        var task = createTask("task-c4", "test.esm", TaskStatus.translating, 3, 10);
+        task.setConfirmationMode("direct");
+        when(translationTaskRepository.selectById("task-c4")).thenReturn(task);
+
+        var items = List.of(
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好")
+        );
+        var request = new ProgressCallbackRequest("task-c4", "translating",
+                new ProgressCallbackRequest.Progress(5, 10), null, null, null, items);
+
+        taskService.handleProgressCallback("task-c4", request);
+
+        verify(translationConfirmationService, never()).saveConfirmationRecords(any(), any());
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /** confirmation 模式下 assembling 回调同时携带 items 时应先写入记录再拦截状态 */
+    @Test
+    void handleProgressCallback_confirmationModeAssemblingWithItems_savesRecordsAndIntercepts() {
+        var task = createTask("task-c5", "test.esm", TaskStatus.translating, 10, 10);
+        task.setConfirmationMode("confirmation");
+        when(translationTaskRepository.selectById("task-c5")).thenReturn(task);
+
+        var items = List.of(
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "last", "最后")
+        );
+        var request = new ProgressCallbackRequest("task-c5", "assembling",
+                new ProgressCallbackRequest.Progress(10, 10), null, null, null, items);
+
+        taskService.handleProgressCallback("task-c5", request);
+
+        verify(translationConfirmationService).saveConfirmationRecords(eq("task-c5"), any());
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.pending_confirmation);
+        verify(translationTaskRepository).updateById(task);
     }
 
     // ========== createZipArchive / cleanupLocalFiles 测试 ==========

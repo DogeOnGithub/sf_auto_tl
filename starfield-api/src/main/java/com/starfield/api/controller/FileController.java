@@ -32,6 +32,7 @@ public class FileController {
      * @param promptId          选择已有 Prompt 的 ID（可选）
      * @param newPromptName     现场编写的 Prompt 名称（可选）
      * @param newPromptContent  现场编写的 Prompt 内容（可选）
+     * @param confirmationMode  翻译确认模式（direct 或 confirmation，可选，默认 direct）
      * @return 任务 ID 和文件名
      * @throws IOException 文件处理异常
      */
@@ -41,9 +42,10 @@ public class FileController {
             @RequestParam(value = "creationVersionId", required = false) Long creationVersionId,
             @RequestParam(value = "promptId", required = false) Long promptId,
             @RequestParam(value = "newPromptName", required = false) String newPromptName,
-            @RequestParam(value = "newPromptContent", required = false) String newPromptContent) throws IOException {
-        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {}", file.getOriginalFilename(), creationVersionId, promptId);
-        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent);
+            @RequestParam(value = "newPromptContent", required = false) String newPromptContent,
+            @RequestParam(value = "confirmationMode", required = false) String confirmationMode) throws IOException {
+        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode);
+        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode);
         return ResponseEntity.ok(response);
     }
 }

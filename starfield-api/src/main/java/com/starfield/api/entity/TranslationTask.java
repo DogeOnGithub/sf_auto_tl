@@ -55,6 +55,9 @@ public class TranslationTask {
     @TableField("prompt_id")
     private Long promptId;
 
+    @TableField("confirmation_mode")
+    private String confirmationMode = "direct";
+
     @TableField("sync_fail_count")
     private Integer syncFailCount = 0;
 

@@ -75,6 +75,19 @@ public class TranslationCacheController {
     }
 
     /**
+     * 根据任务 ID 删除所有关联的缓存记录
+     *
+     * @param taskId 任务 ID
+     * @return 删除的记录数
+     */
+    @DeleteMapping("/by-task/{taskId}")
+    public ResponseEntity<java.util.Map<String, Long>> deleteByTaskId(@PathVariable String taskId) {
+        var count = translationCacheService.deleteByTaskId(taskId);
+        return ResponseEntity.ok(java.util.Map.of("deleted", count));
+    }
+
+
+    /**
      * 批量查询翻译缓存
      *
      * @param request 缓存查询请求

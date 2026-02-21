@@ -30,7 +30,7 @@ class TaskControllerTest {
     @Test
     void getTask_existingTask_returns200WithTaskInfo() throws Exception {
         var now = LocalDateTime.of(2024, 1, 15, 10, 30, 0);
-        var response = new TaskResponse("task-123", "test.esm", "translating",
+        var response = new TaskResponse("task-123", "test.esm", "translating", "direct",
                 new TaskResponse.Progress(5, 10), null, null, now, now);
         when(taskService.getTask("task-123")).thenReturn(response);
 

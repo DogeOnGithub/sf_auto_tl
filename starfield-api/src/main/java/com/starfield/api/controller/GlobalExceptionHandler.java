@@ -8,6 +8,7 @@ import com.starfield.api.service.FileUploadService;
 import com.starfield.api.service.PromptService;
 import com.starfield.api.service.TaskService;
 import com.starfield.api.service.CreationService;
+import com.starfield.api.service.TranslationConfirmationService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -162,6 +163,39 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse("TASK_LINKED_TO_CREATION", "任务关联了作品，请先删除关联的版本"));
     }
+
+
+    /**
+     * 处理确认记录不存在异常
+     */
+    @ExceptionHandler(TranslationConfirmationService.ConfirmationNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleConfirmationNotFound(TranslationConfirmationService.ConfirmationNotFoundException e) {
+        log.warn("[handleConfirmationNotFound] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("CONFIRMATION_NOT_FOUND", "确认记录不存在"));
+    }
+
+    /**
+     * 处理存在未确认记录异常
+     */
+    @ExceptionHandler(TranslationConfirmationService.PendingRecordsExistException.class)
+    public ResponseEntity<ErrorResponse> handlePendingRecordsExist(TranslationConfirmationService.PendingRecordsExistException e) {
+        log.warn("[handlePendingRecordsExist] {}", e.getMessage());
+        var message = "任务存在未确认记录 pendingCount " + e.getPendingCount();
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse("PENDING_RECORDS_EXIST", message));
+    }
+
+    /**
+     * 处理无效任务状态异常
+     */
+    @ExceptionHandler(TranslationConfirmationService.InvalidTaskStateException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidTaskState(TranslationConfirmationService.InvalidTaskStateException e) {
+        log.warn("[handleInvalidTaskState] {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse("INVALID_TASK_STATE", e.getMessage()));
+    }
+
 
 
 }

@@ -9,6 +9,7 @@ public record TaskResponse(
         String taskId,
         String fileName,
         String status,
+        String confirmationMode,
         Progress progress,
         CreationInfo creation,
         PromptInfo prompt,

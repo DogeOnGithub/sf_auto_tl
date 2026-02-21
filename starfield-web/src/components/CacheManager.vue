@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getCacheEntries, updateCacheEntry, deleteCacheEntry, batchDeleteCacheEntries } from '@/services/cacheApi'
+import { getCacheEntries, updateCacheEntry, deleteCacheEntry, batchDeleteCacheEntries, deleteCacheByTaskId } from '@/services/cacheApi'
 import type { CacheEntry } from '@/types'
 
 const props = defineProps<{ isStarborn: boolean }>()
@@ -23,6 +23,8 @@ const submitting = ref(false)
 /** 批量选择状态 */
 const selectedEntries = ref<CacheEntry[]>([])
 
+/** 按任务 ID 清理 */
+const taskIdForClean = ref('')
 function handleSelectionChange(rows: CacheEntry[]) {
   selectedEntries.value = rows
 }
@@ -43,6 +45,29 @@ async function handleBatchDelete() {
   } catch (err: any) {
     if (err === 'cancel') return
     ElMessage.error('批量删除失败')
+  }
+}
+
+/** 根据任务 ID 清理缓存（仅星裔可用） */
+async function handleDeleteByTaskId() {
+  var id = taskIdForClean.value.trim()
+  if (!id) {
+    ElMessage.warning('请输入任务 ID')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确定清理任务 ${id} 的所有翻译缓存？`, '清理确认', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    var res = await deleteCacheByTaskId(id)
+    ElMessage.success(`已清理 ${res.deleted} 条缓存`)
+    taskIdForClean.value = ''
+    loadEntries()
+  } catch (err: any) {
+    if (err === 'cancel') return
+    ElMessage.error('清理失败')
   }
 }
 
@@ -141,6 +166,10 @@ onMounted(() => {
       />
       <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
       <el-button v-if="props.isStarborn && selectedEntries.length > 0" type="danger" @click="handleBatchDelete">批量删除 ({{ selectedEntries.length }})</el-button>
+      <template v-if="props.isStarborn">
+        <el-input v-model="taskIdForClean" placeholder="输入任务 ID" clearable class="task-id-input" />
+        <el-button type="danger" @click="handleDeleteByTaskId">按任务清理</el-button>
+      </template>
     </div>
     <el-table :data="entries" v-loading="loading" empty-text="暂无缓存记录" @selection-change="handleSelectionChange" table-layout="auto">
       <el-table-column v-if="props.isStarborn" type="selection" width="45" />
@@ -199,8 +228,9 @@ onMounted(() => {
 
 <style scoped>
 .cache-desc { margin: 0 0 16px; font-size: 13px; color: var(--el-text-color-secondary); line-height: 1.6; }
-.toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
-.search-input { flex: 1; }
+.toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.search-input { flex: 1; min-width: 200px; }
+.task-id-input { width: 200px; }
 .pagination-wrap { margin-top: 16px; display: flex; justify-content: center; }
 .edit-form { display: flex; flex-direction: column; gap: 12px; }
 .edit-row { display: flex; gap: 12px; align-items: flex-start; }

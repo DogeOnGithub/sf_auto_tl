@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getTask, getTasks } from '@/services/taskApi'
 import type { TaskResponse } from '@/types'
 import TaskCard from './TaskCard.vue'
+import ConfirmationDrawer from './ConfirmationDrawer.vue'
 import { Loading } from '@element-plus/icons-vue'
 
 const props = withDefaults(defineProps<{
@@ -15,8 +16,13 @@ const tasks = ref<TaskResponse[]>([])
 const pollingTimers = ref<Map<string, ReturnType<typeof setInterval>>>(new Map())
 const loading = ref(false)
 
-/** 终态状态集合 */
-const terminalStatuses = new Set(['completed', 'failed', 'expired'])
+/** 翻译确认抽屉状态 */
+const confirmationVisible = ref(false)
+const confirmationTaskId = ref('')
+const confirmationFileName = ref('')
+
+/** 终态状态集合（pending_confirmation 不轮询，等待用户操作） */
+const terminalStatuses = new Set(['completed', 'failed', 'expired', 'pending_confirmation'])
 
 /** 根据 limit 截取显示的任务 */
 const displayedTasks = computed(() => {
@@ -82,6 +88,7 @@ function addTask(taskId: string) {
     taskId,
     fileName: '',
     status: 'waiting',
+    confirmationMode: 'direct',
     progress: { translated: 0, total: 0 },
     creation: null,
     prompt: null,
@@ -117,6 +124,29 @@ onUnmounted(() => {
   pollingTimers.value.clear()
 })
 
+/** 打开翻译确认抽屉 */
+function handleOpenConfirmation(taskId: string, fileName: string) {
+  confirmationTaskId.value = taskId
+  confirmationFileName.value = fileName
+  confirmationVisible.value = true
+}
+
+/** 确认生成完成后刷新任务状态 */
+async function handleGenerated() {
+  try {
+    var updated = await getTask(confirmationTaskId.value)
+    var idx = tasks.value.findIndex((t) => t.taskId === confirmationTaskId.value)
+    if (idx !== -1) {
+      tasks.value[idx] = updated
+    }
+    if (!isTerminal(updated.status)) {
+      startPolling(confirmationTaskId.value)
+    }
+  } catch {
+    // 静默处理
+  }
+}
+
 /** 任务被手动清理后刷新该任务状态 */
 async function handleTaskExpired(taskId: string) {
   try {
@@ -136,11 +166,17 @@ defineExpose({ addTask })
 <template>
   <div class="task-list">
     <h3 v-if="tasks.length > 0" class="task-list-title">翻译任务</h3>
-    <TaskCard v-for="task in displayedTasks" :key="task.taskId" :task="task" @task-expired="handleTaskExpired" />
+    <TaskCard v-for="task in displayedTasks" :key="task.taskId" :task="task" @task-expired="handleTaskExpired" @open-confirmation="handleOpenConfirmation" />
     <el-empty v-if="!loading && tasks.length === 0" description="暂无翻译任务" :image-size="80" />
     <div v-if="loading" style="text-align: center; padding: 24px">
       <el-icon class="is-loading" :size="24"><Loading /></el-icon>
     </div>
+    <ConfirmationDrawer
+      v-model:visible="confirmationVisible"
+      :task-id="confirmationTaskId"
+      :file-name="confirmationFileName"
+      @generated="handleGenerated"
+    />
   </div>
 </template>
 

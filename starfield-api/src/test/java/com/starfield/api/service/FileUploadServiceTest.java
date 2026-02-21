@@ -63,7 +63,7 @@ class FileUploadServiceTest {
         var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", content);
         when(dictionaryEntryRepository.selectList(isNull())).thenReturn(List.of());
 
-        var response = fileUploadService.upload(file, null, null, null, null);
+        var response = fileUploadService.upload(file, null, null, null, null, null);
 
         assertThat(response.taskId()).isNotBlank();
         assertThat(response.fileName()).isEqualTo("test.esm");
@@ -79,7 +79,7 @@ class FileUploadServiceTest {
 
         var captor = ArgumentCaptor.forClass(TranslationTask.class);
 
-        fileUploadService.upload(file, null, null, null, null);
+        fileUploadService.upload(file, null, null, null, null, null);
 
         verify(translationTaskRepository).insert(captor.capture());
         var savedTask = captor.getValue();
@@ -97,7 +97,7 @@ class FileUploadServiceTest {
 
         var captor = ArgumentCaptor.forClass(EngineClient.EngineTranslateRequest.class);
 
-        fileUploadService.upload(file, null, null, null, null);
+        fileUploadService.upload(file, null, null, null, null, null);
 
         verify(engineClient).submitTranslation(captor.capture());
         assertThat(captor.getValue().customPrompt()).isEqualTo(PromptService.DEFAULT_PROMPT);
@@ -114,7 +114,7 @@ class FileUploadServiceTest {
         var taskCaptor = ArgumentCaptor.forClass(TranslationTask.class);
         var engineCaptor = ArgumentCaptor.forClass(EngineClient.EngineTranslateRequest.class);
 
-        fileUploadService.upload(file, null, 42L, null, null);
+        fileUploadService.upload(file, null, 42L, null, null, null);
 
         verify(translationTaskRepository).insert(taskCaptor.capture());
         assertThat(taskCaptor.getValue().getPromptId()).isEqualTo(42L);
@@ -136,7 +136,7 @@ class FileUploadServiceTest {
         var taskCaptor = ArgumentCaptor.forClass(TranslationTask.class);
         var engineCaptor = ArgumentCaptor.forClass(EngineClient.EngineTranslateRequest.class);
 
-        fileUploadService.upload(file, null, null, "测试模板", "自定义翻译指令");
+        fileUploadService.upload(file, null, null, "测试模板", "自定义翻译指令", null);
 
         verify(promptService).createPrompt(any(PromptRequest.class));
         verify(translationTaskRepository).insert(taskCaptor.capture());
@@ -158,7 +158,7 @@ class FileUploadServiceTest {
 
         var taskCaptor = ArgumentCaptor.forClass(TranslationTask.class);
 
-        fileUploadService.upload(file, null, 42L, "新模板", "新内容");
+        fileUploadService.upload(file, null, 42L, "新模板", "新内容", null);
 
         verify(promptService).createPrompt(any(PromptRequest.class));
         verify(promptService, never()).getPromptContent(any());
@@ -173,7 +173,7 @@ class FileUploadServiceTest {
         var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", content);
         when(promptService.getPromptContent(999L)).thenThrow(new PromptService.PromptNotFoundException(999L));
 
-        assertThatThrownBy(() -> fileUploadService.upload(file, null, 999L, null, null))
+        assertThatThrownBy(() -> fileUploadService.upload(file, null, 999L, null, null, null))
                 .isInstanceOf(PromptService.PromptNotFoundException.class);
     }
 
@@ -190,7 +190,7 @@ class FileUploadServiceTest {
 
         var captor = ArgumentCaptor.forClass(EngineClient.EngineTranslateRequest.class);
 
-        fileUploadService.upload(file, null, null, null, null);
+        fileUploadService.upload(file, null, null, null, null, null);
 
         verify(engineClient).submitTranslation(captor.capture());
         var request = captor.getValue();
@@ -265,7 +265,7 @@ class FileUploadServiceTest {
         when(dictionaryEntryRepository.selectList(isNull())).thenReturn(List.of());
         doThrow(new RuntimeException("engine down")).when(engineClient).submitTranslation(any());
 
-        var response = fileUploadService.upload(file, null, null, null, null);
+        var response = fileUploadService.upload(file, null, null, null, null, null);
 
         assertThat(response.taskId()).isNotBlank();
         verify(translationTaskRepository).insert(any(TranslationTask.class));
@@ -280,8 +280,8 @@ class FileUploadServiceTest {
         var file1 = new MockMultipartFile("file", "a.esm", "application/octet-stream", content);
         var file2 = new MockMultipartFile("file", "b.esm", "application/octet-stream", content);
 
-        var response1 = fileUploadService.upload(file1, null, null, null, null);
-        var response2 = fileUploadService.upload(file2, null, null, null, null);
+        var response1 = fileUploadService.upload(file1, null, null, null, null, null);
+        var response2 = fileUploadService.upload(file2, null, null, null, null, null);
 
         assertThat(response1.taskId()).isNotEqualTo(response2.taskId());
     }
@@ -295,7 +295,7 @@ class FileUploadServiceTest {
 
         var taskCaptor = ArgumentCaptor.forClass(TranslationTask.class);
 
-        fileUploadService.upload(file, null, null, "名称", "   ");
+        fileUploadService.upload(file, null, null, "名称", "   ", null);
 
         verify(promptService, never()).createPrompt(any());
         verify(translationTaskRepository).insert(taskCaptor.capture());

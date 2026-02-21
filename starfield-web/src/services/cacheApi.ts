@@ -26,3 +26,8 @@ export function deleteCacheEntry(id: number): Promise<void> {
 export function batchDeleteCacheEntries(ids: number[]): Promise<void> {
   return api.delete('/api/translation-cache/batch', { data: ids }).then(() => {})
 }
+
+/** 根据任务 ID 删除所有关联缓存 */
+export function deleteCacheByTaskId(taskId: string): Promise<{ deleted: number }> {
+  return api.delete<{ deleted: number }>(`/api/translation-cache/by-task/${taskId}`).then((res) => res.data)
+}
