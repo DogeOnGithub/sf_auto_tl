@@ -108,6 +108,23 @@ public class TranslationConfirmationController {
     }
 
     /**
+     * 批量替换译文中的文本
+     *
+     * @param taskId  任务 ID
+     * @param request 批量替换请求
+     * @return 替换的记录数
+     */
+    @PostMapping("/{taskId}/batch-replace")
+    public ResponseEntity<Map<String, Integer>> batchReplace(
+            @PathVariable String taskId,
+            @RequestBody com.starfield.api.dto.ConfirmationBatchReplaceRequest request) {
+        log.info("[batchReplace] 批量替换 taskId {} search {} replace {}", taskId, request.searchStr(), request.replaceStr());
+        var count = translationConfirmationService.batchReplace(taskId, request.ids(), request.searchStr(), request.replaceStr());
+        return ResponseEntity.ok(Map.of("replacedCount", count));
+    }
+
+
+    /**
      * 触发文件生成
      *
      * @param taskId 任务 ID

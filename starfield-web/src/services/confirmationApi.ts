@@ -42,3 +42,19 @@ export function confirmAll(taskId: string): Promise<void> {
 export function generateFile(taskId: string): Promise<void> {
   return api.post(`/api/translation-confirmation/${taskId}/generate`).then(() => {})
 }
+
+/** 批量替换译文 */
+export function batchReplace(
+  taskId: string,
+  searchStr: string,
+  replaceStr: string,
+  ids?: number[],
+): Promise<{ replacedCount: number }> {
+  return api
+    .post<{ replacedCount: number }>(`/api/translation-confirmation/${taskId}/batch-replace`, {
+      ids: ids && ids.length > 0 ? ids : null,
+      searchStr,
+      replaceStr,
+    })
+    .then((res) => res.data)
+}

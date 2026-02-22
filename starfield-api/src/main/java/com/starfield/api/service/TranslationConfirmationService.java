@@ -229,6 +229,49 @@ public class TranslationConfirmationService {
     }
 
     /**
+     * 批量替换译文中的文本（支持指定 ID 列表或全任务范围）
+     *
+     * @param taskId    任务 ID
+     * @param ids       指定的记录 ID 列表（为空时替换全任务范围）
+     * @param searchStr 要查找的文本
+     * @param replaceStr 替换为的文本
+     * @return 实际替换的记录数
+     */
+    public int batchReplace(String taskId, List<Long> ids, String searchStr, String replaceStr) {
+        log.info("[batchReplace] 批量替换 taskId {} idsSize {} search {} replace {}", taskId, Objects.nonNull(ids) ? ids.size() : 0, searchStr, replaceStr);
+
+        var wrapper = new LambdaQueryWrapper<TranslationConfirmation>()
+                .eq(TranslationConfirmation::getTaskId, taskId)
+                .apply("target_text LIKE {0}", "%" + searchStr + "%");
+
+        if (Objects.nonNull(ids) && !ids.isEmpty()) {
+            wrapper.in(TranslationConfirmation::getId, ids);
+        }
+
+        var matchedRecords = confirmationRepository.selectList(wrapper);
+
+        if (matchedRecords.isEmpty()) {
+            log.info("[batchReplace] 无匹配记录 taskId {}", taskId);
+            return 0;
+        }
+
+        var replacedCount = 0;
+        for (var record : matchedRecords) {
+            var newText = record.getTargetText().replace(searchStr, replaceStr);
+            if (!newText.equals(record.getTargetText())) {
+                record.setTargetText(newText);
+                record.setUpdatedAt(LocalDateTime.now());
+                confirmationRepository.updateById(record);
+                replacedCount++;
+            }
+        }
+
+        log.info("[batchReplace] 替换完成 taskId {} replacedCount {}", taskId, replacedCount);
+        return replacedCount;
+    }
+
+
+    /**
      * 触发文件生成：校验全部已确认 → 写入翻译缓存 → 提交引擎组装
      *
      * @param taskId 任务 ID

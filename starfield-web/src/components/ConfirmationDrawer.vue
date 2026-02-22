@@ -9,6 +9,7 @@ import {
   batchConfirm,
   confirmAll,
   generateFile,
+  batchReplace,
 } from '@/services/confirmationApi'
 import type { ConfirmationRecord } from '@/types'
 
@@ -37,6 +38,12 @@ const dialogVisible = ref(false)
 const editingEntry = ref<ConfirmationRecord | null>(null)
 const editingText = ref('')
 const submitting = ref(false)
+
+/** 批量替换弹窗相关 */
+const replaceDialogVisible = ref(false)
+const searchStr = ref('')
+const replaceStr = ref('')
+const replacing = ref(false)
 
 /** 统计 */
 const pendingCount = computed(() => records.value.filter(r => r.status === 'pending').length)
@@ -178,6 +185,43 @@ async function handleGenerate() {
   }
 }
 
+/** 打开批量替换弹窗 */
+function openReplaceDialog() {
+  searchStr.value = ''
+  replaceStr.value = ''
+  replaceDialogVisible.value = true
+}
+
+/** 执行批量替换 */
+async function handleBatchReplace() {
+  if (!searchStr.value) {
+    ElMessage.warning('请输入要查找的文本')
+    return
+  }
+  var scope = selectedIds.value.length > 0 ? `选中的 ${selectedIds.value.length} 条` : '全部'
+  try {
+    await ElMessageBox.confirm(
+      `将在${scope}记录中把「${searchStr.value}」替换为「${replaceStr.value}」，是否继续？`,
+      '批量替换',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  replacing.value = true
+  try {
+    var ids = selectedIds.value.length > 0 ? selectedIds.value : undefined
+    var res = await batchReplace(props.taskId, searchStr.value, replaceStr.value, ids)
+    ElMessage.success(`已替换 ${res.replacedCount} 条记录`)
+    replaceDialogVisible.value = false
+    loadData()
+  } catch {
+    ElMessage.error('替换失败')
+  } finally {
+    replacing.value = false
+  }
+}
+
 function handleClose() {
   emit('update:visible', false)
 }
@@ -216,6 +260,7 @@ function handleClose() {
         <el-check-tag :checked="statusFilter === 'confirmed'" @change="setStatusFilter('confirmed')">已确认</el-check-tag>
       </div>
       <div class="toolbar-right">
+        <el-button @click="openReplaceDialog">批量替换</el-button>
         <el-button :disabled="selectedIds.length === 0" @click="handleBatchConfirm">
           确认选中 ({{ selectedIds.length }})
         </el-button>
@@ -301,6 +346,29 @@ function handleClose() {
       <el-button type="primary" :loading="submitting" @click="saveEdit">确定</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="replaceDialogVisible" title="批量替换译文" width="480px" append-to-body>
+    <div class="replace-hint" v-if="selectedIds.length > 0">
+      <el-tag type="info" size="small">仅替换选中的 {{ selectedIds.length }} 条记录</el-tag>
+    </div>
+    <div class="replace-hint" v-else>
+      <el-tag type="warning" size="small">未勾选记录，将替换该任务下所有匹配的译文</el-tag>
+    </div>
+    <div class="edit-form" style="margin-top: 12px">
+      <div class="edit-row">
+        <span class="edit-label">查找</span>
+        <el-input v-model="searchStr" placeholder="要查找的文本" clearable />
+      </div>
+      <div class="edit-row">
+        <span class="edit-label">替换</span>
+        <el-input v-model="replaceStr" placeholder="替换为的文本（留空则删除匹配文本）" clearable />
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="replaceDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="replacing" :disabled="!searchStr" @click="handleBatchReplace">替换</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -375,5 +443,9 @@ function handleClose() {
   margin-top: 16px;
   display: flex;
   justify-content: center;
+}
+
+.replace-hint {
+  margin-bottom: 4px;
 }
 </style>
