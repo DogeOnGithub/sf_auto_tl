@@ -53,6 +53,9 @@ public class TranslationCacheService {
      *
      * @param request 缓存保存请求
      */
+    /** 中文字符正则，用于过滤原文已是目标语言的记录 */
+    private static final java.util.regex.Pattern CHINESE_PATTERN = java.util.regex.Pattern.compile("[\\u4e00-\\u9fff]");
+
     public void save(CacheSaveRequest request) {
         log.info("[save] 收到缓存保存请求 taskId {} targetLang {} itemsSize {}", request.taskId(), request.targetLang(), Objects.nonNull(request.items()) ? request.items().size() : 0);
 
@@ -61,11 +64,22 @@ public class TranslationCacheService {
             return;
         }
 
-        for (var item : request.items()) {
+        // 过滤掉无效缓存记录：原文含中文（已是目标语言）或原文与译文相同（未实际翻译）
+        var filteredItems = request.items().stream()
+                .filter(item -> Objects.nonNull(item.sourceText()) && !CHINESE_PATTERN.matcher(item.sourceText()).find())
+                .filter(item -> !Objects.equals(item.sourceText(), item.targetText()))
+                .collect(Collectors.toList());
+
+        var skippedCount = request.items().size() - filteredItems.size();
+        if (skippedCount > 0) {
+            log.info("[save] 跳过原文含中文的记录 taskId {} skippedCount {}", request.taskId(), skippedCount);
+        }
+
+        for (var item : filteredItems) {
             upsertItem(item, request.taskId(), request.targetLang());
         }
 
-        log.info("[save] 保存完成 数量 {}", request.items().size());
+        log.info("[save] 保存完成 数量 {}", filteredItems.size());
     }
 
     /**
