@@ -185,55 +185,98 @@ def _translate_batch(
     return {}
 
 
+def _split_batches(
+    records: list[StringRecord],
+    max_chars: int,
+    max_records: int,
+) -> list[list[StringRecord]]:
+    """按文本总字符数和最大记录数动态分批。
+
+    逐条累加字符数 当累计字符数超过 max_chars 或记录数达到 max_records 时切分新批次。
+    单条文本超过 max_chars 时独立成一批 不会被跳过。
+
+    Args:
+        records: 待分批的记录列表。
+        max_chars: 每批文本总字符数上限。
+        max_records: 每批最大记录数上限。
+
+    Returns:
+        分批后的记录列表。
+    """
+    batches: list[list[StringRecord]] = []
+    current_batch: list[StringRecord] = []
+    current_chars = 0
+
+    for record in records:
+        text_len = len(record.text)
+
+        # 当前批次加入这条后会超限 先切分
+        if current_batch and (current_chars + text_len > max_chars or len(current_batch) >= max_records):
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+
+        current_batch.append(record)
+        current_chars += text_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
 def translate_records(
     records: list[StringRecord],
     target_lang: str = "zh-CN",
     custom_prompt: str | None = None,
     dictionary_entries: list[dict] | None = None,
     batch_size: int = 20,
+    max_batch_chars: int = 6000,
+    max_batch_records: int = 80,
     on_batch_done: Callable[[int], None] | None = None,
     on_batch_translated: Callable[[dict[str, str], list[StringRecord]], None] | None = None,
 ) -> dict[str, str]:
     """批量翻译 StringRecord 列表。
 
-    将记录按 batch_size 分批，逐批调用 LLM 翻译。每批独立重试，
-    失败的批次记录错误日志，不影响其他批次。
+    根据文本总字符数动态分批 充分利用 LLM 上下文窗口。
+    每批独立重试 失败的批次记录错误日志 不影响其他批次。
 
     Args:
         records: 待翻译的 StringRecord 列表。
-        target_lang: 目标语言，默认 zh-CN。
-        custom_prompt: 用户自定义 Prompt，None 时使用默认模板。
+        target_lang: 目标语言 默认 zh-CN。
+        custom_prompt: 用户自定义 Prompt None 时使用默认模板。
         dictionary_entries: 词典词条列表。
-        batch_size: 每批翻译的记录数，默认 20。
-        on_batch_done: 每完成一个 Batch 后的回调函数，参数为当前已翻译总数。
-        on_batch_translated: 每完成一个 Batch 后的回调函数，参数为该批翻译结果和对应的原始记录。
+        batch_size: 已废弃 保留参数兼容性 实际使用 max_batch_chars 和 max_batch_records。
+        max_batch_chars: 每批文本总字符数上限 默认 6000。
+        max_batch_records: 每批最大记录数上限 防止编号过多导致 LLM 混乱 默认 80。
+        on_batch_done: 每完成一个 Batch 后的回调函数 参数为当前已翻译总数。
+        on_batch_translated: 每完成一个 Batch 后的回调函数 参数为该批翻译结果和对应的原始记录。
 
     Returns:
         record_id -> translated_text 的映射字典。
-        成功翻译的记录包含翻译文本，失败批次的记录不包含在结果中。
+        成功翻译的记录包含翻译文本 失败批次的记录不包含在结果中。
     """
     if not records:
         logger.info("[translate_records] 无待翻译记录")
         return {}
 
+    # 按文本字符数动态分批
+    batches = _split_batches(records, max_batch_chars, max_batch_records)
+
     logger.info(
-        "[translate_records] 开始翻译 records_count %d batch_size %d target_lang %s",
-        len(records), batch_size, target_lang,
+        "[translate_records] 开始翻译 records_count %d batches_count %d target_lang %s max_batch_chars %d max_batch_records %d",
+        len(records), len(batches), target_lang, max_batch_chars, max_batch_records,
     )
 
     client = _get_client()
     model = _get_model()
     all_translations: dict[str, str] = {}
 
-    # 按 batch_size 分批
-    for i in range(0, len(records), batch_size):
-        batch = records[i : i + batch_size]
-        batch_num = i // batch_size + 1
-        total_batches = (len(records) + batch_size - 1) // batch_size
-
+    for batch_num, batch in enumerate(batches, 1):
+        batch_chars = sum(len(r.text) for r in batch)
         logger.info(
-            "[translate_records] 翻译批次 %d/%d records_count %d",
-            batch_num, total_batches, len(batch),
+            "[translate_records] 翻译批次 %d/%d records_count %d chars %d",
+            batch_num, len(batches), len(batch), batch_chars,
         )
 
         batch_result = _translate_batch(
@@ -257,3 +300,4 @@ def translate_records(
         len(records), len(all_translations),
     )
     return all_translations
+

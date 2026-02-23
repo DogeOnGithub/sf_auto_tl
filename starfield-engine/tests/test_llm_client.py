@@ -29,8 +29,8 @@ def _make_records(n: int) -> list[StringRecord]:
 
 
 def _mock_completion(translated_lines: list[str]) -> MagicMock:
-    """构造一个模拟的 OpenAI ChatCompletion 响应。"""
-    content = "\n".join(translated_lines)
+    """构造一个模拟的 OpenAI ChatCompletion 响应。使用 [N] 编号格式。"""
+    content = "\n".join(f"[{i+1}] {line}" for i, line in enumerate(translated_lines))
     message = MagicMock()
     message.content = content
     choice = MagicMock()
@@ -50,7 +50,7 @@ class TestParseResponse:
     def test_exact_match(self):
         """返回行数与记录数一致时，逐行匹配。"""
         records = _make_records(3)
-        response_text = "翻译0\n翻译1\n翻译2"
+        response_text = "[1] 翻译0\n[2] 翻译1\n[3] 翻译2"
         result = _parse_response(response_text, records)
 
         assert len(result) == 3
@@ -60,7 +60,7 @@ class TestParseResponse:
     def test_fewer_lines_falls_back_to_original(self):
         """返回行数不足时，缺失的记录回退到原文。"""
         records = _make_records(3)
-        response_text = "翻译0"
+        response_text = "[1] 翻译0"
         result = _parse_response(response_text, records)
 
         assert result[records[0].record_id] == "翻译0"
@@ -70,7 +70,7 @@ class TestParseResponse:
     def test_empty_line_falls_back_to_original(self):
         """空翻译行回退到原文。"""
         records = _make_records(2)
-        response_text = "翻译0\n"
+        response_text = "[1] 翻译0"
         result = _parse_response(response_text, records)
 
         assert result[records[0].record_id] == "翻译0"
@@ -204,10 +204,10 @@ class TestTranslateRecords:
     @patch("engine.llm_client._get_client")
     @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
     def test_multiple_batches(self, mock_model, mock_client):
-        """记录数 > batch_size 时应分多批调用。"""
+        """记录数 > max_batch_records 时应分多批调用。"""
         records = _make_records(5)
         client = MagicMock()
-        # 第一批 2 条，第二批 2 条，第三批 1 条
+        # max_batch_records=2 强制分 3 批：2+2+1
         client.chat.completions.create.side_effect = [
             _mock_completion(["翻译0", "翻译1"]),
             _mock_completion(["翻译2", "翻译3"]),
@@ -215,11 +215,10 @@ class TestTranslateRecords:
         ]
         mock_client.return_value = client
 
-        result = translate_records(records, batch_size=2)
+        result = translate_records(records, max_batch_records=2)
 
         assert len(result) == 5
         assert client.chat.completions.create.call_count == 3
-        # 验证所有记录 ID 都有翻译
         for r in records:
             assert r.record_id in result
 
@@ -230,7 +229,7 @@ class TestTranslateRecords:
         """部分批次失败不影响其他批次。"""
         records = _make_records(4)
         client = MagicMock()
-        # 第一批成功，第二批全部重试失败
+        # max_batch_records=2 强制分 2 批 第一批成功 第二批全部重试失败
         client.chat.completions.create.side_effect = [
             _mock_completion(["翻译0", "翻译1"]),
             Exception("fail"),
@@ -239,9 +238,8 @@ class TestTranslateRecords:
         ]
         mock_client.return_value = client
 
-        result = translate_records(records, batch_size=2)
+        result = translate_records(records, max_batch_records=2)
 
-        # 第一批 2 条成功，第二批 0 条
         assert len(result) == 2
         assert records[0].record_id in result
         assert records[1].record_id in result

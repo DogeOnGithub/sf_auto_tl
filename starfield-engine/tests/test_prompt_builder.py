@@ -91,10 +91,10 @@ class TestBuildPromptTexts:
         assert "Steel Shield" in result
 
     def test_texts_joined_by_newline(self):
-        """多条待翻译文本应以换行分隔。"""
+        """多条待翻译文本应以编号格式换行分隔。"""
         texts = ["Line1", "Line2", "Line3"]
         result = build_prompt(texts_to_translate=texts)
-        assert "Line1\nLine2\nLine3" in result
+        assert "[1] Line1\n[2] Line2\n[3] Line3" in result
 
     def test_empty_texts_list(self):
         """空文本列表应仍然包含文本段头部。"""
