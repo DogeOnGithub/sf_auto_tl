@@ -283,23 +283,23 @@ class Translator:
 
             self._update_progress(task_id, len(translations), total)
 
-            # 5.6 汇总上报所有词条（确保 confirmation 模式下每个词条都写入确认记录）
-            records_by_id = {r.record_id: r for r in records}
-            all_items = []
-            for rid, translated in translations.items():
-                rec = records_by_id.get(rid)
-                if rec:
-                    parts = rid.split(":", 2)
-                    record_type = parts[0] if len(parts) > 0 else ""
-                    all_items.append({
-                        "recordId": rid,
-                        "recordType": record_type,
-                        "sourceText": rec.text,
-                        "targetText": translated,
-                    })
-            if all_items:
-                logger.info("[_run_task] 汇总上报所有词条 task_id %s count %d", task_id, len(all_items))
-                self._report_progress(task_id, callback_url, items=all_items)
+            # 5.6 仅上报翻译失败回退的词条（缓存命中和 LLM 翻译的词条已在前面增量上报）
+            if missing_count > 0:
+                records_by_id = {r.record_id: r for r in records}
+                fallback_items = []
+                for r in records:
+                    if r.record_id not in cached and r.record_id not in new_translations:
+                        parts = r.record_id.split(":", 2)
+                        record_type = parts[0] if len(parts) > 0 else ""
+                        fallback_items.append({
+                            "recordId": r.record_id,
+                            "recordType": record_type,
+                            "sourceText": r.text,
+                            "targetText": translations[r.record_id],
+                        })
+                if fallback_items:
+                    logger.info("[_run_task] 上报回退词条 task_id %s count %d", task_id, len(fallback_items))
+                    self._report_progress(task_id, callback_url, items=fallback_items)
 
             # 6. 重组 ESM（confirmation 模式跳过，由后续 assembly 接口生成）
             if skip_cache:

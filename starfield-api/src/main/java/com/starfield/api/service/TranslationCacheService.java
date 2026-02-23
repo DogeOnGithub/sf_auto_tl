@@ -10,9 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -25,8 +23,15 @@ public class TranslationCacheService {
 
     final TranslationCacheRepository translationCacheRepository;
 
+    /** 每批 SQL 操作的最大记录数 防止 SQL 语句过长 */
+    private static final int BATCH_CHUNK_SIZE = 500;
+
+    /** 中文字符正则 用于过滤原文已是目标语言的记录 */
+    private static final java.util.regex.Pattern CHINESE_PATTERN = java.util.regex.Pattern.compile("[\\u4e00-\\u9fff]");
+
     /**
-     * 批量查询缓存，返回每条词条的命中状态和 target_text
+     * 批量查询缓存 返回每条词条的命中状态和 target_text
+     * 按 BATCH_CHUNK_SIZE 分片查询 避免 SQL IN 子句过长
      *
      * @param request 缓存查询请求
      * @return 缓存查询响应
@@ -39,8 +44,34 @@ public class TranslationCacheService {
             return new CacheQueryResponse(Collections.emptyList());
         }
 
+        // 构建查询参数列表
+        var queryParams = request.items().stream()
+                .map(item -> {
+                    var param = new TranslationCache();
+                    param.setRecordType(Objects.nonNull(item.recordType()) ? item.recordType() : "");
+                    param.setSubrecordType(item.subrecordType());
+                    param.setSourceText(item.sourceText());
+                    return param;
+                })
+                .collect(Collectors.toList());
+
+        // 分片批量查询
+        var hitMap = new HashMap<String, String>();
+        for (var i = 0; i < queryParams.size(); i += BATCH_CHUNK_SIZE) {
+            var chunk = queryParams.subList(i, Math.min(i + BATCH_CHUNK_SIZE, queryParams.size()));
+            var hits = translationCacheRepository.batchQueryCache(request.targetLang(), chunk);
+            hits.forEach(h -> hitMap.put(h.getRecordType() + "|" + h.getSubrecordType() + "|" + h.getSourceText(), h.getTargetText()));
+        }
+
+        // 按原始顺序构建结果
         var resultItems = request.items().stream()
-                .map(item -> queryItem(item, request.targetLang()))
+                .map(item -> {
+                    var key = (Objects.nonNull(item.recordType()) ? item.recordType() : "") + "|" + item.subrecordType() + "|" + item.sourceText();
+                    var targetText = hitMap.get(key);
+                    return Objects.nonNull(targetText)
+                            ? new CacheQueryResultItem(item.recordId(), true, targetText)
+                            : new CacheQueryResultItem(item.recordId(), false, null);
+                })
                 .collect(Collectors.toList());
 
         var hitCount = resultItems.stream().filter(CacheQueryResultItem::hit).count();
@@ -50,12 +81,10 @@ public class TranslationCacheService {
 
     /**
      * 批量保存翻译结果到缓存（UPSERT 语义）
+     * 按 BATCH_CHUNK_SIZE 分片执行 避免单条 SQL 过长
      *
      * @param request 缓存保存请求
      */
-    /** 中文字符正则，用于过滤原文已是目标语言的记录 */
-    private static final java.util.regex.Pattern CHINESE_PATTERN = java.util.regex.Pattern.compile("[\\u4e00-\\u9fff]");
-
     public void save(CacheSaveRequest request) {
         log.info("[save] 收到缓存保存请求 taskId {} targetLang {} itemsSize {}", request.taskId(), request.targetLang(), Objects.nonNull(request.items()) ? request.items().size() : 0);
 
@@ -75,11 +104,38 @@ public class TranslationCacheService {
             log.info("[save] 跳过原文含中文的记录 taskId {} skippedCount {}", request.taskId(), skippedCount);
         }
 
-        for (var item : filteredItems) {
-            upsertItem(item, request.taskId(), request.targetLang());
+        if (filteredItems.isEmpty()) {
+            log.info("[save] 过滤后无有效记录 跳过");
+            return;
         }
 
-        log.info("[save] 保存完成 数量 {}", filteredItems.size());
+        // 按 (recordType, subrecordType, sourceText) 去重 只保留最后一条
+        var deduped = new LinkedHashMap<String, CacheSaveItem>();
+        filteredItems.forEach(item -> {
+            var key = (Objects.nonNull(item.recordType()) ? item.recordType() : "") + "|" + item.subrecordType() + "|" + item.sourceText();
+            deduped.put(key, item);
+        });
+
+        var entities = deduped.values().stream()
+                .map(item -> {
+                    var entity = new TranslationCache();
+                    entity.setTaskId(request.taskId());
+                    entity.setRecordType(Objects.nonNull(item.recordType()) ? item.recordType() : "");
+                    entity.setSubrecordType(item.subrecordType());
+                    entity.setSourceText(item.sourceText());
+                    entity.setTargetText(item.targetText());
+                    entity.setTargetLang(request.targetLang());
+                    return entity;
+                })
+                .collect(Collectors.toList());
+
+        // 分片批量 UPSERT
+        for (var i = 0; i < entities.size(); i += BATCH_CHUNK_SIZE) {
+            var chunk = entities.subList(i, Math.min(i + BATCH_CHUNK_SIZE, entities.size()));
+            translationCacheRepository.batchUpsertCache(chunk);
+        }
+
+        log.info("[save] 保存完成 数量 {}", entities.size());
     }
 
     /**
@@ -173,56 +229,5 @@ public class TranslationCacheService {
         var count = translationCacheRepository.delete(wrapper);
         log.info("[deleteByTaskId] 删除完成 taskId {} count {}", taskId, count);
         return count;
-    }
-
-
-    /**
-     * 查询单条词条的缓存命中情况
-     */
-    private CacheQueryResultItem queryItem(CacheQueryItem item, String targetLang) {
-        var wrapper = new LambdaQueryWrapper<TranslationCache>()
-                .eq(TranslationCache::getRecordType, Objects.nonNull(item.recordType()) ? item.recordType() : "")
-                .eq(TranslationCache::getSubrecordType, item.subrecordType())
-                .eq(TranslationCache::getSourceText, item.sourceText())
-                .eq(TranslationCache::getTargetLang, targetLang);
-        var cached = translationCacheRepository.selectOne(wrapper);
-
-        if (Objects.nonNull(cached)) {
-            return new CacheQueryResultItem(item.recordId(), true, cached.getTargetText());
-        }
-        return new CacheQueryResultItem(item.recordId(), false, null);
-    }
-
-    /**
-     * UPSERT 单条缓存记录：存在则更新，不存在则插入
-     */
-    private void upsertItem(CacheSaveItem item, String taskId, String targetLang) {
-        var recordType = Objects.nonNull(item.recordType()) ? item.recordType() : "";
-        var wrapper = new LambdaQueryWrapper<TranslationCache>()
-                .eq(TranslationCache::getRecordType, recordType)
-                .eq(TranslationCache::getSubrecordType, item.subrecordType())
-                .eq(TranslationCache::getSourceText, item.sourceText())
-                .eq(TranslationCache::getTargetLang, targetLang);
-        var existing = translationCacheRepository.selectOne(wrapper);
-
-        if (Objects.nonNull(existing)) {
-            existing.setTargetText(item.targetText());
-            existing.setTaskId(taskId);
-            existing.setUpdatedAt(LocalDateTime.now());
-            translationCacheRepository.updateById(existing);
-            log.debug("[upsertItem] 更新缓存 recordType {} subrecordType {} targetLang {}", recordType, item.subrecordType(), targetLang);
-        } else {
-            var cache = new TranslationCache();
-            cache.setTaskId(taskId);
-            cache.setRecordType(recordType);
-            cache.setSubrecordType(item.subrecordType());
-            cache.setSourceText(item.sourceText());
-            cache.setTargetText(item.targetText());
-            cache.setTargetLang(targetLang);
-            cache.setCreatedAt(LocalDateTime.now());
-            cache.setUpdatedAt(LocalDateTime.now());
-            translationCacheRepository.insert(cache);
-            log.debug("[upsertItem] 插入缓存 recordType {} subrecordType {} targetLang {}", recordType, item.subrecordType(), targetLang);
-        }
     }
 }

@@ -43,8 +43,13 @@ public class TranslationConfirmationService {
     private static final String STATUS_PENDING = "pending";
     private static final String STATUS_CONFIRMED = "confirmed";
 
+    /** 每批 SQL 操作的最大记录数 防止 SQL 语句过长 */
+    private static final int BATCH_CHUNK_SIZE = 500;
+
     /**
      * 批量保存确认记录（由回调逻辑调用）
+     * 使用 ON CONFLICT (task_id, record_id) DO NOTHING 防止重复插入
+     * 按 BATCH_CHUNK_SIZE 分片执行 避免单条 SQL 过长
      *
      * @param taskId 任务 ID
      * @param items  待保存的确认记录项列表
@@ -52,25 +57,17 @@ public class TranslationConfirmationService {
     public void saveConfirmationRecords(String taskId, List<ConfirmationSaveItem> items) {
         log.info("[saveConfirmationRecords] 保存确认记录 taskId {} itemsSize {}", taskId, items.size());
 
-        // 查询已存在的 recordId 集合 避免重复插入
-        var existingRecordIds = confirmationRepository.selectList(
-                new LambdaQueryWrapper<TranslationConfirmation>()
-                        .eq(TranslationConfirmation::getTaskId, taskId)
-                        .select(TranslationConfirmation::getRecordId)
-        ).stream()
-                .map(TranslationConfirmation::getRecordId)
-                .collect(Collectors.toSet());
-
-        var newItems = items.stream()
-                .filter(item -> !existingRecordIds.contains(item.recordId()))
-                .collect(Collectors.toList());
-
-        if (newItems.isEmpty()) {
-            log.info("[saveConfirmationRecords] 无新增记录 taskId {} 全部已存在", taskId);
+        if (items.isEmpty()) {
             return;
         }
 
-        var entities = newItems.stream()
+        // 内存去重 同一批次中可能有重复的 recordId
+        var seen = new java.util.HashSet<String>();
+        var dedupedItems = items.stream()
+                .filter(item -> seen.add(item.recordId()))
+                .collect(Collectors.toList());
+
+        var entities = dedupedItems.stream()
                 .map(item -> {
                     var entity = new TranslationConfirmation();
                     entity.setTaskId(taskId);
@@ -79,17 +76,17 @@ public class TranslationConfirmationService {
                     entity.setSourceText(item.sourceText());
                     entity.setTargetText(item.targetText());
                     entity.setStatus(STATUS_PENDING);
-                    entity.setCreatedAt(LocalDateTime.now());
-                    entity.setUpdatedAt(LocalDateTime.now());
                     return entity;
                 })
                 .collect(Collectors.toList());
 
-        for (var entity : entities) {
-            confirmationRepository.insert(entity);
+        // 分片批量插入 ON CONFLICT DO NOTHING
+        for (var i = 0; i < entities.size(); i += BATCH_CHUNK_SIZE) {
+            var chunk = entities.subList(i, Math.min(i + BATCH_CHUNK_SIZE, entities.size()));
+            confirmationRepository.batchInsertIgnore(chunk);
         }
 
-        log.info("[saveConfirmationRecords] 保存完成 taskId {} newCount {} skippedCount {}", taskId, newItems.size(), items.size() - newItems.size());
+        log.info("[saveConfirmationRecords] 保存完成 taskId {} count {}", taskId, entities.size());
     }
 
     /**
@@ -190,7 +187,7 @@ public class TranslationConfirmationService {
     }
 
     /**
-     * 批量确认
+     * 批量确认 按 BATCH_CHUNK_SIZE 分片执行 避免 IN 子句过长
      *
      * @param taskId 任务 ID
      * @param ids    确认记录 ID 列表
@@ -198,13 +195,10 @@ public class TranslationConfirmationService {
     public void batchConfirm(String taskId, List<Long> ids) {
         log.info("[batchConfirm] 批量确认 taskId {} idsSize {}", taskId, ids.size());
 
-        var updateWrapper = new LambdaUpdateWrapper<TranslationConfirmation>()
-                .in(TranslationConfirmation::getId, ids)
-                .eq(TranslationConfirmation::getTaskId, taskId)
-                .set(TranslationConfirmation::getStatus, STATUS_CONFIRMED)
-                .set(TranslationConfirmation::getUpdatedAt, LocalDateTime.now());
-
-        confirmationRepository.update(null, updateWrapper);
+        for (var i = 0; i < ids.size(); i += BATCH_CHUNK_SIZE) {
+            var chunk = ids.subList(i, Math.min(i + BATCH_CHUNK_SIZE, ids.size()));
+            confirmationRepository.batchUpdateStatus(taskId, chunk, STATUS_CONFIRMED);
+        }
 
         log.info("[batchConfirm] 批量确认完成 taskId {} count {}", taskId, ids.size());
     }
@@ -230,6 +224,7 @@ public class TranslationConfirmationService {
 
     /**
      * 批量替换译文中的文本（支持指定 ID 列表或全任务范围）
+     * 当指定 ID 列表时按 BATCH_CHUNK_SIZE 分片查询 避免 IN 子句过长
      *
      * @param taskId    任务 ID
      * @param ids       指定的记录 ID 列表（为空时替换全任务范围）
@@ -240,15 +235,24 @@ public class TranslationConfirmationService {
     public int batchReplace(String taskId, List<Long> ids, String searchStr, String replaceStr) {
         log.info("[batchReplace] 批量替换 taskId {} idsSize {} search {} replace {}", taskId, Objects.nonNull(ids) ? ids.size() : 0, searchStr, replaceStr);
 
-        var wrapper = new LambdaQueryWrapper<TranslationConfirmation>()
-                .eq(TranslationConfirmation::getTaskId, taskId)
-                .apply("target_text LIKE {0}", "%" + searchStr + "%");
+        var matchedRecords = new java.util.ArrayList<TranslationConfirmation>();
 
         if (Objects.nonNull(ids) && !ids.isEmpty()) {
-            wrapper.in(TranslationConfirmation::getId, ids);
+            // 分片查询 避免 IN 子句过长
+            for (var i = 0; i < ids.size(); i += BATCH_CHUNK_SIZE) {
+                var chunk = ids.subList(i, Math.min(i + BATCH_CHUNK_SIZE, ids.size()));
+                var wrapper = new LambdaQueryWrapper<TranslationConfirmation>()
+                        .eq(TranslationConfirmation::getTaskId, taskId)
+                        .apply("target_text LIKE {0}", "%" + searchStr + "%")
+                        .in(TranslationConfirmation::getId, chunk);
+                matchedRecords.addAll(confirmationRepository.selectList(wrapper));
+            }
+        } else {
+            var wrapper = new LambdaQueryWrapper<TranslationConfirmation>()
+                    .eq(TranslationConfirmation::getTaskId, taskId)
+                    .apply("target_text LIKE {0}", "%" + searchStr + "%");
+            matchedRecords.addAll(confirmationRepository.selectList(wrapper));
         }
-
-        var matchedRecords = confirmationRepository.selectList(wrapper);
 
         if (matchedRecords.isEmpty()) {
             log.info("[batchReplace] 无匹配记录 taskId {}", taskId);

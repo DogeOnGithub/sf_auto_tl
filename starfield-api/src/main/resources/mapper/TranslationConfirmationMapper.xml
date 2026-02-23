@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.starfield.api.repository.TranslationConfirmationRepository">
+
+    <!-- 批量插入确认记录（ON CONFLICT 忽略重复的 task_id + record_id） -->
+    <insert id="batchInsertIgnore">
+        INSERT INTO translation_confirmation (task_id, record_id, record_type, source_text, target_text, status, created_at, updated_at)
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.taskId}, #{item.recordId}, #{item.recordType}, #{item.sourceText}, #{item.targetText}, #{item.status}, NOW(), NOW())
+        </foreach>
+        ON CONFLICT (task_id, record_id) DO NOTHING
+    </insert>
+
+    <!-- 批量更新确认记录状态（分片 IN 查询） -->
+    <update id="batchUpdateStatus">
+        UPDATE translation_confirmation
+        SET status = #{status}, updated_at = NOW()
+        WHERE task_id = #{taskId}
+        AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+</mapper>
