@@ -231,8 +231,8 @@ def translate_records(
     custom_prompt: str | None = None,
     dictionary_entries: list[dict] | None = None,
     batch_size: int = 20,
-    max_batch_chars: int = 6000,
-    max_batch_records: int = 80,
+    max_batch_chars: int = 10000,
+    max_batch_records: int = 100,
     on_batch_done: Callable[[int], None] | None = None,
     on_batch_translated: Callable[[dict[str, str], list[StringRecord]], None] | None = None,
 ) -> dict[str, str]:
@@ -247,8 +247,8 @@ def translate_records(
         custom_prompt: 用户自定义 Prompt None 时使用默认模板。
         dictionary_entries: 词典词条列表。
         batch_size: 已废弃 保留参数兼容性 实际使用 max_batch_chars 和 max_batch_records。
-        max_batch_chars: 每批文本总字符数上限 默认 6000。
-        max_batch_records: 每批最大记录数上限 防止编号过多导致 LLM 混乱 默认 80。
+        max_batch_chars: 每批文本总字符数上限 默认 10000。
+        max_batch_records: 每批最大记录数上限 防止编号过多导致 LLM 混乱 默认 100。
         on_batch_done: 每完成一个 Batch 后的回调函数 参数为当前已翻译总数。
         on_batch_translated: 每完成一个 Batch 后的回调函数 参数为该批翻译结果和对应的原始记录。
 
