@@ -50,6 +50,7 @@ export function uploadPatch(versionId: number, file: File, onProgress?: (percent
   var fd = new FormData()
   fd.append('file', file)
   return api.post<Creation>(`/api/creations/versions/${versionId}/patch`, fd, {
+    timeout: 300000,
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (e) => {
       if (onProgress && e.total) {
@@ -64,6 +65,7 @@ export function uploadFile(versionId: number, file: File, onProgress?: (percent:
   var fd = new FormData()
   fd.append('file', file)
   return api.post<Creation>(`/api/creations/versions/${versionId}/file`, fd, {
+    timeout: 300000,
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (e) => {
       if (onProgress && e.total) {
