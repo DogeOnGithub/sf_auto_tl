@@ -26,6 +26,7 @@ public record ProgressCallbackRequest(
             String recordId,
             String recordType,
             String sourceText,
-            String targetText
+            String targetText,
+            String editorId
     ) {}
 }

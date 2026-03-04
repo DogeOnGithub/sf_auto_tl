@@ -170,7 +170,7 @@ public class TaskService {
         if (isConfirmationMode && Objects.nonNull(request.items()) && !request.items().isEmpty()) {
             var saveItems = request.items().stream()
                     .map(item -> new ConfirmationSaveItem(
-                            item.recordId(), item.recordType(), item.sourceText(), item.targetText()))
+                            item.recordId(), item.recordType(), item.sourceText(), item.targetText(), item.editorId()))
                     .collect(Collectors.toList());
             translationConfirmationService.saveConfirmationRecords(taskId, saveItems);
             log.info("[handleProgressCallback] confirmation 模式增量写入确认记录 taskId {} count {}", taskId, saveItems.size());

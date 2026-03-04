@@ -37,6 +37,9 @@ public class TranslationConfirmation {
     @TableField("status")
     private String status = "pending";
 
+    @TableField("editor_id")
+    private String editorId = "";
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

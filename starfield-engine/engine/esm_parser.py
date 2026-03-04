@@ -50,6 +50,7 @@ class StringRecord:
 
     record_id: str
     text: str
+    editor_id: str = ""
 
 
 
@@ -76,8 +77,8 @@ def _is_printable_text(text: str) -> bool:
     return printable_count / len(text) >= 0.9
 
 
-def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[StringRecord]:
-    """解析记录内的子记录，提取可翻译文本。
+def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[list[StringRecord], str]:
+    """解析记录内的子记录，提取可翻译文本和 Editor ID。
 
     判断逻辑：
     1. 子记录类型在 TRANSLATABLE_SUBRECORD_TYPES 中（任意记录类型下都翻译）
@@ -86,9 +87,12 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
     同一 form_id 下多个同类型子记录通过序号区分：
     第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
     后续为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#1、#2 等。
+
+    返回 (records, editor_id)。
     """
     records = []
     offset = 0
+    editor_id = ""
     # 统计同一 form_id 下每种子记录类型出现的次数，用于生成唯一 record_id
     sub_type_counts: dict[bytes, int] = {}
 
@@ -111,6 +115,10 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
             )
             break
 
+        # 提取 Editor ID（EDID 子记录）
+        if sub_type == b"EDID" and sub_size > 0 and not editor_id:
+            editor_id = _decode_text(data[offset : offset + sub_size])
+
         is_translatable = (
             sub_type in TRANSLATABLE_SUBRECORD_TYPES
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
@@ -129,7 +137,7 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> list[Str
 
         offset += sub_size
 
-    return records
+    return records, editor_id
 
 
 
@@ -218,7 +226,10 @@ def _parse_records(data: bytes, offset: int, end: int) -> tuple[list[StringRecor
 
             # 解析子记录提取可翻译文本
             try:
-                sub_records = _parse_subrecords(record_data, rec_type, form_id)
+                sub_records, editor_id = _parse_subrecords(record_data, rec_type, form_id)
+                if editor_id:
+                    for sr in sub_records:
+                        sr.editor_id = editor_id
                 records.extend(sub_records)
             except Exception:
                 logger.warning(

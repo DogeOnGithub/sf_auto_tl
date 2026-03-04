@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS translation_confirmation (
     record_type      VARCHAR(50)  NOT NULL,
     source_text      TEXT         NOT NULL,
     target_text      TEXT         NOT NULL,
+    editor_id        VARCHAR(255) DEFAULT '',
     status           VARCHAR(20)  NOT NULL DEFAULT 'pending',
     created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP

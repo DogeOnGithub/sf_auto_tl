@@ -75,6 +75,7 @@ public class TranslationConfirmationService {
                     entity.setRecordType(item.recordType());
                     entity.setSourceText(item.sourceText());
                     entity.setTargetText(item.targetText());
+                    entity.setEditorId(Objects.nonNull(item.editorId()) ? item.editorId() : "");
                     entity.setStatus(STATUS_PENDING);
                     return entity;
                 })
@@ -374,6 +375,7 @@ public class TranslationConfirmationService {
                 record.getSourceText(),
                 record.getTargetText(),
                 record.getStatus(),
+                record.getEditorId(),
                 record.getCreatedAt(),
                 record.getUpdatedAt()
         );

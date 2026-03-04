@@ -210,6 +210,7 @@ class Translator:
                             "recordType": record_type,
                             "sourceText": rec.text,
                             "targetText": translated,
+                            "editorId": rec.editor_id,
                         })
                 if cached_items:
                     self._report_progress(task_id, callback_url, items=cached_items)
@@ -242,11 +243,13 @@ class Translator:
                                 record_type = parts[0] if len(parts) > 0 else ""
                                 source_rec = records_by_id.get(rid)
                                 source_text = source_rec.text if source_rec else rec.text
+                                editor_id = source_rec.editor_id if source_rec else rec.editor_id
                                 items.append({
                                     "recordId": rid,
                                     "recordType": record_type,
                                     "sourceText": source_text,
                                     "targetText": translated,
+                                    "editorId": editor_id,
                                 })
                     if items:
                         self._report_progress(task_id, callback_url, items=items)
@@ -296,6 +299,7 @@ class Translator:
                             "recordType": record_type,
                             "sourceText": r.text,
                             "targetText": translations[r.record_id],
+                            "editorId": r.editor_id,
                         })
                 if fallback_items:
                     logger.info("[_run_task] 上报回退词条 task_id %s count %d", task_id, len(fallback_items))

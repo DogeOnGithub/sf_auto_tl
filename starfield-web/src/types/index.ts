@@ -134,6 +134,7 @@ export interface ConfirmationRecord {
   taskId: string
   recordId: string
   recordType: string
+  editorId: string
   sourceText: string
   targetText: string
   status: string

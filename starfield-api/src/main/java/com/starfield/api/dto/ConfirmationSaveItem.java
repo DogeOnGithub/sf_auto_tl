@@ -7,5 +7,6 @@ public record ConfirmationSaveItem(
         String recordId,
         String recordType,
         String sourceText,
-        String targetText
+        String targetText,
+        String editorId
 ) {}

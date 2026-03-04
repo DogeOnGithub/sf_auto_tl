@@ -4,10 +4,10 @@
 
     <!-- 批量插入确认记录（ON CONFLICT 忽略重复的 task_id + record_id） -->
     <insert id="batchInsertIgnore">
-        INSERT INTO translation_confirmation (task_id, record_id, record_type, source_text, target_text, status, created_at, updated_at)
+        INSERT INTO translation_confirmation (task_id, record_id, record_type, source_text, target_text, editor_id, status, created_at, updated_at)
         VALUES
         <foreach collection="items" item="item" separator=",">
-            (#{item.taskId}, #{item.recordId}, #{item.recordType}, #{item.sourceText}, #{item.targetText}, #{item.status}, NOW(), NOW())
+            (#{item.taskId}, #{item.recordId}, #{item.recordType}, #{item.sourceText}, #{item.targetText}, #{item.editorId}, #{item.status}, NOW(), NOW())
         </foreach>
         ON CONFLICT (task_id, record_id) DO NOTHING
     </insert>

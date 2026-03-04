@@ -13,6 +13,7 @@ public record ConfirmationRecordResponse(
         String sourceText,
         String targetText,
         String status,
+        String editorId,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

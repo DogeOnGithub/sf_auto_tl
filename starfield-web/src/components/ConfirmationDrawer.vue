@@ -277,12 +277,17 @@ function handleClose() {
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="id" label="ID" width="70" sortable />
+      <el-table-column label="Form ID" width="120" sortable :sort-method="(a: ConfirmationRecord, b: ConfirmationRecord) => a.recordId.split(':')[1].localeCompare(b.recordId.split(':')[1])">
+        <template #default="{ row }">
+          <span>{{ row.recordId.split(':')[1] || '' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="类型" width="140">
         <template #default="{ row }">
           <span>{{ row.recordType }} → {{ row.recordId.split(':')[2] || '' }}</span>
         </template>
       </el-table-column>
+      <el-table-column prop="editorId" label="Editor ID" width="160" show-overflow-tooltip />
       <el-table-column prop="sourceText" label="原文" min-width="200" show-overflow-tooltip />
       <el-table-column label="译文" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
@@ -330,12 +335,16 @@ function handleClose() {
   <el-dialog v-model="dialogVisible" title="编辑译文" width="560px" append-to-body>
     <div v-if="editingEntry" class="edit-form">
       <div class="edit-row">
-        <span class="edit-label">ID</span>
-        <span>{{ editingEntry.id }}</span>
+        <span class="edit-label">Form ID</span>
+        <span>{{ editingEntry.recordId.split(':')[1] || '' }}</span>
       </div>
       <div class="edit-row">
         <span class="edit-label">类型</span>
         <span>{{ editingEntry.recordType }} → {{ editingEntry.recordId.split(':')[2] || '' }}</span>
+      </div>
+      <div class="edit-row">
+        <span class="edit-label">Editor ID</span>
+        <span>{{ editingEntry.editorId || '-' }}</span>
       </div>
       <div class="edit-row">
         <span class="edit-label">原文</span>
