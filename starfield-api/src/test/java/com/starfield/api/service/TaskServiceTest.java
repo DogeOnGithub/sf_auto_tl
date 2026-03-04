@@ -240,8 +240,8 @@ class TaskServiceTest {
         when(translationTaskRepository.selectById("task-c1")).thenReturn(task);
 
         var items = List.of(
-                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好"),
-                new ProgressCallbackRequest.TranslationItem("r2", "text", "world", "世界")
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好", ""),
+                new ProgressCallbackRequest.TranslationItem("r2", "text", "world", "世界", "")
         );
         var request = new ProgressCallbackRequest("task-c1", "translating",
                 new ProgressCallbackRequest.Progress(5, 10), null, null, null, items);
@@ -297,7 +297,7 @@ class TaskServiceTest {
         when(translationTaskRepository.selectById("task-c4")).thenReturn(task);
 
         var items = List.of(
-                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好")
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "hello", "你好", "")
         );
         var request = new ProgressCallbackRequest("task-c4", "translating",
                 new ProgressCallbackRequest.Progress(5, 10), null, null, null, items);
@@ -316,7 +316,7 @@ class TaskServiceTest {
         when(translationTaskRepository.selectById("task-c5")).thenReturn(task);
 
         var items = List.of(
-                new ProgressCallbackRequest.TranslationItem("r1", "text", "last", "最后")
+                new ProgressCallbackRequest.TranslationItem("r1", "text", "last", "最后", "")
         );
         var request = new ProgressCallbackRequest("task-c5", "assembling",
                 new ProgressCallbackRequest.Progress(10, 10), null, null, null, items);
