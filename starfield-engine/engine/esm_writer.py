@@ -5,16 +5,20 @@ from __future__ import annotations
 import logging
 import shutil
 import struct
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
 from engine.esm_parser import (
+    COMPRESSED_FLAG,
     GRUP_HEADER_SIZE,
     RECORD_HEADER_SIZE,
     SUBRECORD_HEADER_SIZE,
     TRANSLATABLE_COMBINATIONS,
     TRANSLATABLE_SUBRECORD_TYPES,
+    _decode_text,
+    _is_printable_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,20 +74,23 @@ def _rewrite_subrecords(
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
         if is_translatable and sub_size > 0:
-            count = sub_type_counts.get(sub_type, 0)
-            if count == 0:
-                record_id = _build_record_id(record_type, form_id, sub_type)
-            else:
-                record_id = _build_record_id(record_type, form_id, sub_type) + f"#{count}"
-            sub_type_counts[sub_type] = count + 1
+            # 与 parser 保持一致：仅对可打印文本计数和生成 record_id
+            text = _decode_text(sub_data)
+            if text and _is_printable_text(text):
+                count = sub_type_counts.get(sub_type, 0)
+                if count == 0:
+                    record_id = _build_record_id(record_type, form_id, sub_type)
+                else:
+                    record_id = _build_record_id(record_type, form_id, sub_type) + f"#{count}"
+                sub_type_counts[sub_type] = count + 1
 
-            if record_id in translations:
-                new_text = translations[record_id]
-                new_data = new_text.encode("utf-8") + b"\x00"
-                new_size = len(new_data)
-                parts.append(sub_type + struct.pack("<H", new_size) + new_data)
-                offset += SUBRECORD_HEADER_SIZE + sub_size
-                continue
+                if record_id in translations:
+                    new_text = translations[record_id]
+                    new_data = new_text.encode("utf-8") + b"\x00"
+                    new_size = len(new_data)
+                    parts.append(sub_type + struct.pack("<H", new_size) + new_data)
+                    offset += SUBRECORD_HEADER_SIZE + sub_size
+                    continue
 
         # 保持原始子记录不变
         parts.append(data[offset : offset + SUBRECORD_HEADER_SIZE + sub_size])
@@ -138,22 +145,54 @@ def _rewrite_records(
                 break
 
             data_size = struct.unpack_from("<I", data, offset + 4)[0]
+            flags = struct.unpack_from("<I", data, offset + 8)[0]
             form_id = struct.unpack_from("<I", data, offset + 12)[0]
 
             record_data_start = offset + RECORD_HEADER_SIZE
             record_data_end = min(record_data_start + data_size, end)
 
-            # 保留记录头部（稍后更新 data_size）
+            # 保留记录头部（稍后更新 data_size 和 flags）
             rec_header = bytearray(data[offset : offset + RECORD_HEADER_SIZE])
 
-            # 重写子记录
             original_sub_data = data[record_data_start:record_data_end]
-            new_sub_data = _rewrite_subrecords(original_sub_data, rec_type, form_id, translations)
 
-            # 更新 data_size
-            struct.pack_into("<I", rec_header, 4, len(new_sub_data))
+            if flags & COMPRESSED_FLAG:
+                # 压缩记录：先解压 再重写子记录 再压缩回去
+                if len(original_sub_data) < 4:
+                    parts.append(data[offset:record_data_end])
+                    offset = record_data_end
+                    continue
+                decompressed_size = struct.unpack_from("<I", original_sub_data, 0)[0]
+                try:
+                    decompressed_data = zlib.decompress(original_sub_data[4:], bufsize=decompressed_size)
+                except zlib.error:
+                    logger.warning(
+                        "[_rewrite_records] zlib 解压失败 跳过记录 rec_type %s form_id %08X",
+                        rec_type.decode("ascii", errors="replace"), form_id,
+                    )
+                    parts.append(data[offset:record_data_end])
+                    offset = record_data_end
+                    continue
 
-            parts.append(bytes(rec_header) + new_sub_data)
+                new_sub_data = _rewrite_subrecords(decompressed_data, rec_type, form_id, translations)
+
+                # 重新压缩
+                compressed = zlib.compress(new_sub_data)
+                new_record_data = struct.pack("<I", len(new_sub_data)) + compressed
+
+                # 更新 data_size（压缩后的大小 + 4 字节解压大小头）
+                struct.pack_into("<I", rec_header, 4, len(new_record_data))
+
+                parts.append(bytes(rec_header) + new_record_data)
+            else:
+                # 非压缩记录：直接重写子记录
+                new_sub_data = _rewrite_subrecords(original_sub_data, rec_type, form_id, translations)
+
+                # 更新 data_size
+                struct.pack_into("<I", rec_header, 4, len(new_sub_data))
+
+                parts.append(bytes(rec_header) + new_sub_data)
+
             offset = record_data_end
 
     return b"".join(parts)

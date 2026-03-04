@@ -393,3 +393,191 @@ class TestEdgeCases:
         """非 TES4 头部应原样返回。"""
         data = b"XXXX" + b"\x00" * 20
         assert rewrite_esm_bytes(data, {}) == data
+
+
+import zlib
+
+from engine.esm_parser import COMPRESSED_FLAG
+
+
+class TestCompressedRecords:
+    """压缩记录写回测试（修复 NPC_ FULL、NPC_ SHRT、CELL FULL、PNDT FULL 写回失败）。"""
+
+    def _build_compressed_record(self, rec_type, form_id, subrecords):
+        """构建压缩记录：子记录数据先压缩，再加上解压大小头。"""
+        decompressed_size = len(subrecords)
+        compressed = zlib.compress(subrecords)
+        record_data = struct.pack("<I", decompressed_size) + compressed
+        return build_record(rec_type, form_id, record_data, flags=COMPRESSED_FLAG)
+
+    def test_compressed_npc_full_replacement(self):
+        """压缩的 NPC_ 记录中 FULL 子记录应能正确替换。"""
+        sub = build_subrecord(b"FULL", null_terminated("Guard"))
+        rec = self._build_compressed_record(b"NPC_", 0x00000300, sub)
+        grup = build_grup(b"NPC_", rec)
+        data = build_esm_file(grup)
+
+        # parser 能读取
+        records = parse_esm_bytes(data)
+        assert len(records) == 1
+        assert records[0].text == "Guard"
+        assert records[0].record_id == "NPC_:00000300:FULL"
+
+        # writer 能写回
+        translations = {"NPC_:00000300:FULL": "守卫"}
+        result = rewrite_esm_bytes(data, translations)
+
+        # 验证写回后能正确读取
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 1
+        assert result_records[0].text == "守卫"
+
+    def test_compressed_npc_shrt_replacement(self):
+        """压缩的 NPC_ 记录中 SHRT 子记录应能正确替换。"""
+        sub_full = build_subrecord(b"FULL", null_terminated("Captain"))
+        sub_shrt = build_subrecord(b"SHRT", null_terminated("Cap"))
+        rec = self._build_compressed_record(b"NPC_", 0x00000301, sub_full + sub_shrt)
+        grup = build_grup(b"NPC_", rec)
+        data = build_esm_file(grup)
+
+        translations = {
+            "NPC_:00000301:FULL": "队长",
+            "NPC_:00000301:SHRT": "队",
+        }
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 2
+        texts = {r.record_id: r.text for r in result_records}
+        assert texts["NPC_:00000301:FULL"] == "队长"
+        assert texts["NPC_:00000301:SHRT"] == "队"
+
+    def test_compressed_cell_full_replacement(self):
+        """压缩的 CELL 记录中 FULL 子记录应能正确替换。"""
+        sub = build_subrecord(b"FULL", null_terminated("New Atlantis"))
+        rec = self._build_compressed_record(b"CELL", 0x00000400, sub)
+        grup = build_grup(b"CELL", rec)
+        data = build_esm_file(grup)
+
+        translations = {"CELL:00000400:FULL": "新亚特兰蒂斯"}
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 1
+        assert result_records[0].text == "新亚特兰蒂斯"
+
+    def test_compressed_pndt_full_replacement(self):
+        """压缩的 PNDT 记录中 FULL 子记录应能正确替换。"""
+        sub = build_subrecord(b"FULL", null_terminated("Jemison"))
+        rec = self._build_compressed_record(b"PNDT", 0x00000500, sub)
+        grup = build_grup(b"PNDT", rec)
+        data = build_esm_file(grup)
+
+        translations = {"PNDT:00000500:FULL": "杰米森"}
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 1
+        assert result_records[0].text == "杰米森"
+
+    def test_compressed_no_translation_round_trip(self):
+        """压缩记录无翻译时应保持可正确解析（往返一致性）。"""
+        sub = build_subrecord(b"FULL", null_terminated("Test NPC"))
+        rec = self._build_compressed_record(b"NPC_", 0x00000600, sub)
+        grup = build_grup(b"NPC_", rec)
+        data = build_esm_file(grup)
+
+        result = rewrite_esm_bytes(data, {})
+
+        # 重写后仍能正确解析
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 1
+        assert result_records[0].text == "Test NPC"
+
+    def test_mixed_compressed_and_uncompressed(self):
+        """混合压缩和非压缩记录应都能正确处理。"""
+        # 压缩的 NPC_ 记录
+        sub_npc = build_subrecord(b"FULL", null_terminated("Guard"))
+        rec_npc = self._build_compressed_record(b"NPC_", 0x00000700, sub_npc)
+
+        # 非压缩的 WEAP 记录
+        sub_weap = build_subrecord(b"FULL", null_terminated("Sword"))
+        rec_weap = build_record(b"WEAP", 0x00000701, sub_weap)
+
+        grup_npc = build_grup(b"NPC_", rec_npc)
+        grup_weap = build_grup(b"WEAP", rec_weap)
+        data = build_esm_file(grup_npc + grup_weap)
+
+        translations = {
+            "NPC_:00000700:FULL": "守卫",
+            "WEAP:00000701:FULL": "剑",
+        }
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 2
+        texts = {r.record_id: r.text for r in result_records}
+        assert texts["NPC_:00000700:FULL"] == "守卫"
+        assert texts["WEAP:00000701:FULL"] == "剑"
+
+
+class TestNonPrintableSubrecordCounting:
+    """非可打印子记录计数一致性测试（修复重复词条写回遗漏）。"""
+
+    def test_non_printable_full_before_printable_full(self):
+        """非可打印 FULL 子记录不应影响后续可打印 FULL 的 record_id 编号。
+
+        Parser 只对可打印文本计数，Writer 必须保持一致。
+        """
+        # 第一个 FULL：二进制数据（不可打印，parser 会跳过）
+        binary_data = b"\x80\x81\x82\x83\x00"
+        sub_binary = build_subrecord(b"FULL", binary_data)
+
+        # 第二个 FULL：正常文本（可打印，parser 会提取）
+        sub_text = build_subrecord(b"FULL", null_terminated("Iron Sword"))
+
+        rec = build_record(b"WEAP", 0x00000800, sub_binary + sub_text)
+        grup = build_grup(b"WEAP", rec)
+        data = build_esm_file(grup)
+
+        # parser 应只提取一条记录，record_id 为 WEAP:00000800:FULL（count=0）
+        records = parse_esm_bytes(data)
+        assert len(records) == 1
+        assert records[0].record_id == "WEAP:00000800:FULL"
+        assert records[0].text == "Iron Sword"
+
+        # writer 应能正确匹配并替换
+        translations = {"WEAP:00000800:FULL": "铁剑"}
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 1
+        assert result_records[0].text == "铁剑"
+        assert result_records[0].record_id == "WEAP:00000800:FULL"
+
+    def test_multiple_printable_with_non_printable_interleaved(self):
+        """多个可打印 FULL 之间夹杂非可打印 FULL 时编号应正确。"""
+        sub1 = build_subrecord(b"FULL", null_terminated("First"))
+        sub_bin = build_subrecord(b"FULL", b"\xff\xfe\xfd\x00")
+        sub2 = build_subrecord(b"FULL", null_terminated("Second"))
+
+        rec = build_record(b"WEAP", 0x00000900, sub1 + sub_bin + sub2)
+        grup = build_grup(b"WEAP", rec)
+        data = build_esm_file(grup)
+
+        records = parse_esm_bytes(data)
+        assert len(records) == 2
+        assert records[0].record_id == "WEAP:00000900:FULL"
+        assert records[1].record_id == "WEAP:00000900:FULL#1"
+
+        translations = {
+            "WEAP:00000900:FULL": "第一",
+            "WEAP:00000900:FULL#1": "第二",
+        }
+        result = rewrite_esm_bytes(data, translations)
+
+        result_records = parse_esm_bytes(result)
+        assert len(result_records) == 2
+        texts = {r.record_id: r.text for r in result_records}
+        assert texts["WEAP:00000900:FULL"] == "第一"
+        assert texts["WEAP:00000900:FULL#1"] == "第二"

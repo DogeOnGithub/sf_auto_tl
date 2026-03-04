@@ -277,6 +277,7 @@ function handleClose() {
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="40" />
+      <el-table-column prop="id" label="ID" width="70" sortable />
       <el-table-column label="类型" width="140">
         <template #default="{ row }">
           <span>{{ row.recordType }} → {{ row.recordId.split(':')[2] || '' }}</span>
@@ -328,6 +329,10 @@ function handleClose() {
 
   <el-dialog v-model="dialogVisible" title="编辑译文" width="560px" append-to-body>
     <div v-if="editingEntry" class="edit-form">
+      <div class="edit-row">
+        <span class="edit-label">ID</span>
+        <span>{{ editingEntry.id }}</span>
+      </div>
       <div class="edit-row">
         <span class="edit-label">类型</span>
         <span>{{ editingEntry.recordType }} → {{ editingEntry.recordId.split(':')[2] || '' }}</span>
