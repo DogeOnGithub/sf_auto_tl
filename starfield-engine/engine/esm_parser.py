@@ -56,10 +56,18 @@ class StringRecord:
 
 
 def _decode_text(data: bytes) -> str:
-    """解码子记录中的文本数据，去除末尾的 null 终止符。"""
+    """解码子记录中的文本数据，去除末尾的 null 终止符。
+
+    ESM 文件中的文本大多为 UTF-8 编码，但部分 mod 使用 Windows-1252 编码
+    （例如右单引号 0x92、破折号 0x97 等）。先尝试 UTF-8，若出现 replacement
+    character 则回退到 Windows-1252。
+    """
     if data.endswith(b"\x00"):
         data = data[:-1]
-    return data.decode("utf-8", errors="replace")
+    text = data.decode("utf-8", errors="replace")
+    if "\ufffd" in text:
+        text = data.decode("windows-1252", errors="replace")
+    return text
 
 
 def _build_record_id(record_type: bytes, form_id: int, subrecord_type: bytes) -> str:
