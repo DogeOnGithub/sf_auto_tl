@@ -13,8 +13,10 @@ from engine.esm_parser import (
 from tests.esm_test_helpers import (
     build_esm_file,
     build_grup,
+    build_oversized_subrecord,
     build_record,
     build_subrecord,
+    build_xxxx_subrecord,
     null_terminated,
 )
 
@@ -215,3 +217,64 @@ class TestParseEsmFileIO:
 
         assert len(result) == 1
         assert result[0].text == "Test Item"
+
+
+class TestParseEsmXxxxSubrecord:
+    """XXXX 超大子记录处理测试。"""
+
+    def test_xxxx_skips_oversized_data_and_parses_subsequent(self):
+        """XXXX 标记的超大子记录应被正确跳过，后续子记录正常解析。"""
+        # 构建一个 QUST 记录：EDID + 超大 VMAD（用 XXXX）+ CNAM（可翻译）
+        edid = build_subrecord(b"EDID", null_terminated("TestQuest"))
+        # 模拟一个超大 VMAD 子记录（70000 字节，超过 uint16 最大值 65535）
+        large_vmad_data = b"\x00" * 70000
+        oversized_vmad = build_oversized_subrecord(b"VMAD", large_vmad_data)
+        cnam = build_subrecord(b"CNAM", null_terminated("Quest log entry text"))
+
+        rec = build_record(b"QUST", 0x00100000, edid + oversized_vmad + cnam)
+        grup = build_grup(b"QUST", rec)
+        data = build_esm_file(grup)
+
+        result = parse_esm_bytes(data)
+
+        assert len(result) == 1
+        assert result[0].record_id == "QUST:00100000:CNAM"
+        assert result[0].text == "Quest log entry text"
+        assert result[0].editor_id == "TestQuest"
+
+    def test_xxxx_with_translatable_oversized_subrecord(self):
+        """XXXX 标记的超大可翻译子记录也应被正确提取。"""
+        # 构建一个超大 DESC 子记录（内容是可翻译文本）
+        large_text = "A " + "very " * 14000 + "long description."
+        oversized_desc = build_oversized_subrecord(b"DESC", null_terminated(large_text))
+
+        rec = build_record(b"BOOK", 0x00200000, oversized_desc)
+        grup = build_grup(b"BOOK", rec)
+        data = build_esm_file(grup)
+
+        result = parse_esm_bytes(data)
+
+        assert len(result) == 1
+        assert result[0].record_id == "BOOK:00200000:DESC"
+        assert result[0].text == large_text
+
+    def test_xxxx_multiple_oversized_subrecords(self):
+        """多个 XXXX 超大子记录应各自独立处理。"""
+        large_data_1 = b"\x00" * 70000
+        oversized_1 = build_oversized_subrecord(b"VMAD", large_data_1)
+        cnam = build_subrecord(b"CNAM", null_terminated("First log"))
+        large_data_2 = b"\x00" * 80000
+        oversized_2 = build_oversized_subrecord(b"CTDA", large_data_2)
+        nnam = build_subrecord(b"NNAM", null_terminated("Quest objective"))
+
+        rec = build_record(b"QUST", 0x00300000, oversized_1 + cnam + oversized_2 + nnam)
+        grup = build_grup(b"QUST", rec)
+        data = build_esm_file(grup)
+
+        result = parse_esm_bytes(data)
+
+        assert len(result) == 2
+        assert result[0].record_id == "QUST:00300000:CNAM"
+        assert result[0].text == "First log"
+        assert result[1].record_id == "QUST:00300000:NNAM"
+        assert result[1].text == "Quest objective"

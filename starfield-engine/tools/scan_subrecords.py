@@ -182,13 +182,27 @@ def classify_group(samples):
 
 
 def scan_subrecords(data, record_type, form_id, results):
-    """扫描一条记录的所有子记录。"""
+    """扫描一条记录的所有子记录，支持 XXXX 超大子记录。"""
     offset = 0
     rec_str = record_type.decode("ascii", errors="replace")
+    xxxx_size = None
     while offset + SUBRECORD_HEADER_SIZE <= len(data):
         sub_type = data[offset:offset + 4]
         sub_size = struct.unpack_from("<H", data, offset + 4)[0]
         offset += SUBRECORD_HEADER_SIZE
+
+        # 处理 XXXX 超大子记录标记
+        if sub_type == b"XXXX":
+            if sub_size == 4 and offset + 4 <= len(data):
+                xxxx_size = struct.unpack_from("<I", data, offset)[0]
+            offset += sub_size
+            continue
+
+        # 如果前一个子记录是 XXXX，使用其提供的 32 位大小
+        if xxxx_size is not None:
+            sub_size = xxxx_size
+            xxxx_size = None
+
         if offset + sub_size > len(data):
             break
         sub_data = data[offset:offset + sub_size]

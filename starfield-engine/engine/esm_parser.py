@@ -29,6 +29,7 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"PERK", b"EPF2"),   # Perk 效果描述文本
     (b"BOOK", b"CNAM"),   # 书籍正文内容
     (b"MGEF", b"DNAM"),   # 魔法效果描述
+    (b"LVLN", b"ONAM"),   # 等级列表 NPC 覆盖名称
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
@@ -88,6 +89,10 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
     第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
     后续为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#1、#2 等。
 
+    支持 XXXX 超大子记录：当子记录数据超过 65535 字节时，引擎会先写入一个 XXXX
+    子记录（包含 uint32 的真实大小），紧接着的子记录 size 字段为 0，实际大小以
+    XXXX 中的值为准。
+
     返回 (records, editor_id)。
     """
     records = []
@@ -95,6 +100,8 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
     editor_id = ""
     # 统计同一 form_id 下每种子记录类型出现的次数，用于生成唯一 record_id
     sub_type_counts: dict[bytes, int] = {}
+    # XXXX 子记录提供的超大数据大小，供下一个子记录使用
+    xxxx_size: int | None = None
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -107,6 +114,23 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
         sub_type = data[offset : offset + 4]
         sub_size = struct.unpack_from("<H", data, offset + 4)[0]
         offset += SUBRECORD_HEADER_SIZE
+
+        # 处理 XXXX 超大子记录标记
+        if sub_type == b"XXXX":
+            if sub_size == 4 and offset + 4 <= len(data):
+                xxxx_size = struct.unpack_from("<I", data, offset)[0]
+            else:
+                logger.warning(
+                    "[_parse_subrecords] XXXX 子记录格式异常 sub_size %d offset %d form_id %08X",
+                    sub_size, offset, form_id,
+                )
+            offset += sub_size
+            continue
+
+        # 如果前一个子记录是 XXXX，使用其提供的 32 位大小替代当前的 16 位 size
+        if xxxx_size is not None:
+            sub_size = xxxx_size
+            xxxx_size = None
 
         if offset + sub_size > len(data):
             logger.warning(

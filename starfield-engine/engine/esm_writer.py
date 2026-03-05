@@ -49,11 +49,16 @@ def _rewrite_subrecords(
     第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
     后续为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE#1、#2 等。
 
+    支持 XXXX 超大子记录：当子记录数据超过 65535 字节时，前面会有一个 XXXX
+    子记录提供 uint32 的真实大小，紧接着的子记录 size 字段为 0。
+
     返回重写后的子记录字节数据。
     """
     parts: list[bytes] = []
     offset = 0
     sub_type_counts: dict[bytes, int] = {}
+    # XXXX 子记录提供的超大数据大小，供下一个子记录使用
+    xxxx_size: int | None = None
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -62,6 +67,23 @@ def _rewrite_subrecords(
 
         sub_type = data[offset : offset + 4]
         sub_size = struct.unpack_from("<H", data, offset + 4)[0]
+
+        # 处理 XXXX 超大子记录标记
+        if sub_type == b"XXXX":
+            xxxx_header_end = offset + SUBRECORD_HEADER_SIZE + sub_size
+            if sub_size == 4 and offset + SUBRECORD_HEADER_SIZE + 4 <= len(data):
+                xxxx_size = struct.unpack_from("<I", data, offset + SUBRECORD_HEADER_SIZE)[0]
+            # 保留原始 XXXX 子记录（后续可能需要更新）
+            # 先暂存，等处理下一个子记录时决定是否需要修改
+            parts.append(data[offset : xxxx_header_end])
+            offset = xxxx_header_end
+            continue
+
+        # 如果前一个子记录是 XXXX，使用其提供的 32 位大小
+        actual_xxxx = xxxx_size
+        if xxxx_size is not None:
+            sub_size = xxxx_size
+            xxxx_size = None
 
         if offset + SUBRECORD_HEADER_SIZE + sub_size > len(data):
             parts.append(data[offset:])
@@ -88,7 +110,22 @@ def _rewrite_subrecords(
                     new_text = translations[record_id]
                     new_data = new_text.encode("utf-8") + b"\x00"
                     new_size = len(new_data)
-                    parts.append(sub_type + struct.pack("<H", new_size) + new_data)
+
+                    if actual_xxxx is not None:
+                        # 原来有 XXXX 前缀，需要更新 XXXX 中的大小值
+                        # 替换刚才暂存的 XXXX 子记录
+                        parts[-1] = b"XXXX" + struct.pack("<H", 4) + struct.pack("<I", new_size)
+                        parts.append(sub_type + struct.pack("<H", 0) + new_data)
+                    elif new_size > 0xFFFF:
+                        # 翻译后大小超过 uint16，需要新增 XXXX 前缀
+                        parts.append(b"XXXX" + struct.pack("<H", 4) + struct.pack("<I", new_size))
+                        parts.append(sub_type + struct.pack("<H", 0) + new_data)
+                    else:
+                        # 普通大小，直接写入
+                        if actual_xxxx is not None:
+                            # 原来有 XXXX 但现在不需要了，移除暂存的 XXXX
+                            parts[-1] = b""
+                        parts.append(sub_type + struct.pack("<H", new_size) + new_data)
                     offset += SUBRECORD_HEADER_SIZE + sub_size
                     continue
 

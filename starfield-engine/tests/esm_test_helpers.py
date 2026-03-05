@@ -44,3 +44,13 @@ def build_esm_file(records_after_header: bytes, tes4_subrecords: Optional[bytes]
 def null_terminated(text: str) -> bytes:
     """将文本转为 null 终止的 UTF-8 字节。"""
     return text.encode("utf-8") + b"\x00"
+
+
+def build_xxxx_subrecord(real_size: int) -> bytes:
+    """构建 XXXX 超大子记录标记：type(4) + size(2, 固定为4) + real_size(4)。"""
+    return b"XXXX" + struct.pack("<H", 4) + struct.pack("<I", real_size)
+
+
+def build_oversized_subrecord(sub_type: bytes, data: bytes) -> bytes:
+    """构建带 XXXX 前缀的超大子记录：XXXX 标记 + type(4) + size(2, 固定为0) + data。"""
+    return build_xxxx_subrecord(len(data)) + sub_type + struct.pack("<H", 0) + data
