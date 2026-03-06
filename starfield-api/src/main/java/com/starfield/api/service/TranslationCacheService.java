@@ -9,6 +9,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,6 +29,22 @@ public class TranslationCacheService {
 
     /** 每批 SQL 操作的最大记录数 防止 SQL 语句过长 */
     private static final int BATCH_CHUNK_SIZE = 500;
+
+    /**
+     * 计算文本的 MD5 哈希值（32 位小写十六进制）
+     *
+     * @param text 原文
+     * @return MD5 哈希字符串
+     */
+    private static String md5(String text) {
+        try {
+            var md = MessageDigest.getInstance("MD5");
+            var digest = md.digest(text.getBytes(StandardCharsets.UTF_8));
+            return String.format("%032x", new BigInteger(1, digest));
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("MD5 算法不可用", e);
+        }
+    }
 
     /** 中文字符正则 用于过滤原文已是目标语言的记录 */
     private static final java.util.regex.Pattern CHINESE_PATTERN = java.util.regex.Pattern.compile("[\\u4e00-\\u9fff]");
@@ -51,6 +71,7 @@ public class TranslationCacheService {
                     param.setRecordType(Objects.nonNull(item.recordType()) ? item.recordType() : "");
                     param.setSubrecordType(item.subrecordType());
                     param.setSourceText(item.sourceText());
+                    param.setSourceTextHash(md5(item.sourceText()));
                     return param;
                 })
                 .collect(Collectors.toList());
@@ -123,6 +144,7 @@ public class TranslationCacheService {
                     entity.setRecordType(Objects.nonNull(item.recordType()) ? item.recordType() : "");
                     entity.setSubrecordType(item.subrecordType());
                     entity.setSourceText(item.sourceText());
+                    entity.setSourceTextHash(md5(item.sourceText()));
                     entity.setTargetText(item.targetText());
                     entity.setTargetLang(request.targetLang());
                     return entity;

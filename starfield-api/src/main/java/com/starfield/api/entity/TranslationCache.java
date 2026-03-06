@@ -42,4 +42,7 @@ public class TranslationCache {
 
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
+
+    @TableField("source_text_hash")
+    private String sourceTextHash;
 }

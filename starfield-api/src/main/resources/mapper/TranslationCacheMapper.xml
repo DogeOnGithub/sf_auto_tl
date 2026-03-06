@@ -2,27 +2,28 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.starfield.api.repository.TranslationCacheRepository">
 
-    <!-- 批量查询缓存命中（按 record_type + subrecord_type + source_text + target_lang 匹配） -->
+    <!-- 批量查询缓存命中（按 record_type + subrecord_type + source_text_hash + target_lang 匹配） -->
     <select id="batchQueryCache" resultType="com.starfield.api.entity.TranslationCache">
-        SELECT id, task_id, record_type, subrecord_type, source_text, target_text, target_lang, created_at, updated_at
+        SELECT id, task_id, record_type, subrecord_type, source_text, target_text, target_lang, source_text_hash, created_at, updated_at
         FROM translation_cache
         WHERE target_lang = #{targetLang}
-        AND (record_type, subrecord_type, source_text) IN
+        AND (record_type, subrecord_type, source_text_hash) IN
         <foreach collection="items" item="item" open="(" separator="," close=")">
-            (#{item.recordType}, #{item.subrecordType}, #{item.sourceText})
+            (#{item.recordType}, #{item.subrecordType}, #{item.sourceTextHash})
         </foreach>
     </select>
 
-    <!-- 批量 UPSERT 缓存（PostgreSQL ON CONFLICT） -->
+    <!-- 批量 UPSERT 缓存（PostgreSQL ON CONFLICT，使用 source_text_hash 替代 source_text 参与唯一索引） -->
     <insert id="batchUpsertCache">
-        INSERT INTO translation_cache (task_id, record_type, subrecord_type, source_text, target_text, target_lang, created_at, updated_at)
+        INSERT INTO translation_cache (task_id, record_type, subrecord_type, source_text, source_text_hash, target_text, target_lang, created_at, updated_at)
         VALUES
         <foreach collection="items" item="item" separator=",">
-            (#{item.taskId}, #{item.recordType}, #{item.subrecordType}, #{item.sourceText}, #{item.targetText}, #{item.targetLang}, NOW(), NOW())
+            (#{item.taskId}, #{item.recordType}, #{item.subrecordType}, #{item.sourceText}, #{item.sourceTextHash}, #{item.targetText}, #{item.targetLang}, NOW(), NOW())
         </foreach>
-        ON CONFLICT (record_type, subrecord_type, source_text, target_lang)
+        ON CONFLICT (record_type, subrecord_type, source_text_hash, target_lang)
         DO UPDATE SET
             target_text = EXCLUDED.target_text,
+            source_text = EXCLUDED.source_text,
             task_id = EXCLUDED.task_id,
             updated_at = NOW()
     </insert>
