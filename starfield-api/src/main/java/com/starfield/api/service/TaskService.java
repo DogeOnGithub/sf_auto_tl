@@ -257,6 +257,11 @@ public class TaskService {
             handleTaskFailed(task);
         }
 
+        // 终态时清理确认记录（confirmation 模式产生的记录在任务完成/失败后不再需要）
+        if (newStatus == TaskStatus.completed || newStatus == TaskStatus.failed) {
+            cleanupConfirmationRecords(task.getTaskId());
+        }
+
         // 回调成功 重置失败计数
         task.setSyncFailCount(0);
         translationTaskRepository.updateById(task);
@@ -374,6 +379,11 @@ public class TaskService {
                 handleTaskCompleted(task);
             } else if (newStatus == TaskStatus.failed) {
                 handleTaskFailed(task);
+            }
+
+            // 终态时清理确认记录
+            if (newStatus == TaskStatus.completed || newStatus == TaskStatus.failed) {
+                cleanupConfirmationRecords(task.getTaskId());
             }
 
             // 同步成功，重置失败计数
@@ -781,6 +791,25 @@ public class TaskService {
             }
         } catch (Exception e) {
             log.warn("[deleteLocalFile] 本地文件删除失败 taskId {} path {}", taskId, filePath, e);
+        }
+    }
+
+    /**
+     * 清理指定任务的确认记录
+     *
+     * @param taskId 任务 ID
+     */
+    private void cleanupConfirmationRecords(String taskId) {
+        try {
+            var deleted = translationConfirmationRepository.delete(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.starfield.api.entity.TranslationConfirmation>()
+                            .eq(com.starfield.api.entity.TranslationConfirmation::getTaskId, taskId)
+            );
+            if (deleted > 0) {
+                log.info("[cleanupConfirmationRecords] 确认记录已清理 taskId {} count {}", taskId, deleted);
+            }
+        } catch (Exception e) {
+            log.warn("[cleanupConfirmationRecords] 确认记录清理失败 taskId {}", taskId, e);
         }
     }
 
