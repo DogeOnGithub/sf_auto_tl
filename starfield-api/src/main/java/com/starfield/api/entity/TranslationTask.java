@@ -49,7 +49,7 @@ public class TranslationTask {
     @TableField("download_url")
     private String downloadUrl;
 
-    @TableField("creation_version_id")
+    @TableField(value = "creation_version_id", updateStrategy = FieldStrategy.ALWAYS)
     private Long creationVersionId;
 
     @TableField("prompt_id")

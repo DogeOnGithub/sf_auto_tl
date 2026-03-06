@@ -161,6 +161,7 @@ public class TaskService {
 
         var taskWrapper = new QueryWrapper<TranslationTask>()
                 .in("creation_version_id", versionIds)
+                .ne("status", TaskStatus.expired.name())
                 .orderByDesc("created_at");
         return translationTaskRepository.selectList(taskWrapper).stream()
                 .map(this::toResponse)
