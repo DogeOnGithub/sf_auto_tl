@@ -6,7 +6,7 @@ import { useStarborn } from '@/composables/useStarborn'
 import type { TaskResponse } from '@/types'
 import TaskCard from './TaskCard.vue'
 import ConfirmationDrawer from './ConfirmationDrawer.vue'
-import { Loading, Delete } from '@element-plus/icons-vue'
+import { Loading, Delete, Search } from '@element-plus/icons-vue'
 
 const { isStarborn } = useStarborn()
 
@@ -18,6 +18,21 @@ const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
+
+/** 筛选状态 */
+const activeStatus = ref('pending_confirmation')
+const searchFileName = ref('')
+const filterHasCreation = ref<'' | 'true' | 'false'>('')
+
+/** 状态 tab 配置 */
+const statusTabs = [
+  { label: '待确认', value: 'pending_confirmation' },
+  { label: '已完成', value: 'completed' },
+  { label: '翻译中', value: 'translating' },
+  { label: '失败', value: 'failed' },
+  { label: '已过期', value: 'expired' },
+  { label: '全部', value: '' },
+]
 
 /** 勾选状态 */
 const selectedIds = ref<Set<string>>(new Set())
@@ -36,7 +51,7 @@ function isTerminal(status: string): boolean {
 /** 当前页可清理的任务 ID 列表 */
 const expirableIds = computed(() =>
   tasks.value
-    .filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'pending_confirmation')
+    .filter((t) => isExpirable(t))
     .map((t) => t.taskId)
 )
 
@@ -69,9 +84,9 @@ function toggleSelect(taskId: string, val: boolean) {
   }
 }
 
-/** 任务是否可勾选（completed/failed/pending_confirmation 且未关联 creation） */
+/** 任务是否可勾选（completed/failed/pending_confirmation） */
 function isExpirable(task: TaskResponse): boolean {
-  return (task.status === 'completed' || task.status === 'failed' || task.status === 'pending_confirmation') && !task.creation
+  return task.status === 'completed' || task.status === 'failed' || task.status === 'pending_confirmation'
 }
 
 function stopPolling(taskId: string) {
@@ -108,7 +123,13 @@ async function loadTasks() {
 
   loading.value = true
   try {
-    var res = await getTasksPaged(currentPage.value, pageSize.value)
+    var filters: { status?: string; fileName?: string; hasCreation?: boolean } = {}
+    if (activeStatus.value) filters.status = activeStatus.value
+    if (searchFileName.value.trim()) filters.fileName = searchFileName.value.trim()
+    if (filterHasCreation.value === 'true') filters.hasCreation = true
+    else if (filterHasCreation.value === 'false') filters.hasCreation = false
+
+    var res = await getTasksPaged(currentPage.value, pageSize.value, filters)
     tasks.value = res.records
     total.value = res.total
     res.records.filter((t) => !isTerminal(t.status)).forEach((t) => startPolling(t.taskId))
@@ -121,6 +142,24 @@ async function loadTasks() {
 
 function handlePageChange(page: number) {
   currentPage.value = page
+  loadTasks()
+}
+
+/** 切换状态 tab 时重置分页 */
+function handleStatusChange() {
+  currentPage.value = 1
+  loadTasks()
+}
+
+/** 搜索文件名 */
+function handleSearch() {
+  currentPage.value = 1
+  loadTasks()
+}
+
+/** 切换 creation 关联筛选 */
+function handleCreationFilterChange() {
+  currentPage.value = 1
   loadTasks()
 }
 
@@ -181,6 +220,43 @@ onUnmounted(() => {
 
 <template>
   <div class="task-history">
+    <!-- 状态 Tab -->
+    <div class="status-tabs">
+      <div
+        v-for="tab in statusTabs"
+        :key="tab.value"
+        class="status-tag"
+        :class="{ active: activeStatus === tab.value }"
+        @click="activeStatus = tab.value; handleStatusChange()"
+      >
+        {{ tab.label }}
+      </div>
+    </div>
+
+    <!-- 搜索栏 -->
+    <div class="filter-bar">
+      <el-input
+        v-model="searchFileName"
+        placeholder="搜索文件名"
+        clearable
+        style="flex: 1"
+        :prefix-icon="Search"
+        @keyup.enter="handleSearch"
+        @clear="handleSearch"
+      />
+      <el-select
+        v-model="filterHasCreation"
+        placeholder="关联作品"
+        clearable
+        style="width: 180px"
+        @change="handleCreationFilterChange"
+      >
+        <el-option label="已关联作品" value="true" />
+        <el-option label="未关联作品" value="false" />
+      </el-select>
+    </div>
+
+    <!-- 批量操作栏 -->
     <div v-if="isStarborn && tasks.length > 0" class="toolbar">
       <el-checkbox
         :model-value="isAllSelected"
@@ -239,6 +315,44 @@ onUnmounted(() => {
 <style scoped>
 .task-history {
   width: 100%;
+}
+
+.status-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 20px;
+  border-radius: 4px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.status-tag:hover {
+  border-color: var(--el-color-primary-light-3);
+  color: var(--el-color-primary);
+}
+
+.status-tag.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .toolbar {

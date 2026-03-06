@@ -6,9 +6,17 @@ export function getTasks(): Promise<TaskResponse[]> {
   return api.get<TaskResponse[]>('/api/tasks').then((res) => res.data)
 }
 
-/** 分页查询翻译任务列表 */
-export function getTasksPaged(page: number, size: number): Promise<TaskPageResponse> {
-  return api.get<TaskPageResponse>('/api/tasks/page', { params: { page, size } }).then((res) => res.data)
+/** 分页查询翻译任务列表（支持状态、文件名、是否关联 creation 过滤） */
+export function getTasksPaged(
+  page: number,
+  size: number,
+  filters?: { status?: string; fileName?: string; hasCreation?: boolean }
+): Promise<TaskPageResponse> {
+  return api
+    .get<TaskPageResponse>('/api/tasks/page', {
+      params: { page, size, ...filters },
+    })
+    .then((res) => res.data)
 }
 
 /** 查询翻译任务状态 */

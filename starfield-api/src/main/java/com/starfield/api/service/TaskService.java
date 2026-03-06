@@ -103,10 +103,35 @@ public class TaskService {
      * @param size 每页大小
      * @return 分页响应
      */
-    public TaskPageResponse listTasksPaged(int page, int size) {
-        log.info("[listTasksPaged] 分页查询任务 page {} size {}", page, size);
+    /**
+     * 分页查询翻译任务列表（支持状态、文件名、是否关联 creation 过滤）
+     *
+     * @param page        页码
+     * @param size        每页大小
+     * @param status      任务状态过滤（可选）
+     * @param fileName    文件名搜索（可选，模糊匹配）
+     * @param hasCreation 是否关联 creation（可选）
+     * @return 分页响应
+     */
+    public TaskPageResponse listTasksPaged(int page, int size, String status, String fileName, Boolean hasCreation) {
+        log.info("[listTasksPaged] 分页查询任务 page {} size {} status {} fileName {} hasCreation {}", page, size, status, fileName, hasCreation);
         var wrapper = new QueryWrapper<TranslationTask>()
                 .orderByDesc("created_at");
+
+        if (Objects.nonNull(status) && !status.isBlank()) {
+            wrapper.eq("status", status);
+        }
+        if (Objects.nonNull(fileName) && !fileName.isBlank()) {
+            wrapper.apply("file_name ILIKE {0}", "%" + fileName.trim() + "%");
+        }
+        if (Objects.nonNull(hasCreation)) {
+            if (hasCreation) {
+                wrapper.isNotNull("creation_version_id");
+            } else {
+                wrapper.isNull("creation_version_id");
+            }
+        }
+
         var pageResult = translationTaskRepository.selectPage(new Page<>(page, size), wrapper);
         var records = pageResult.getRecords().stream()
                 .map(this::toResponse)
@@ -611,12 +636,10 @@ public class TaskService {
             return;
         }
 
-        // 关联了未删除的 creation version 时禁止清理
+        // 清理时解除 creation 关联（允许星裔模式下清理关联了 creation 的任务）
         if (Objects.nonNull(task.getCreationVersionId())) {
-            var version = creationVersionRepository.selectById(task.getCreationVersionId());
-            if (Objects.nonNull(version)) {
-                throw new TaskLinkedToCreationException(taskId, version.getCreationId());
-            }
+            log.info("[expireTask] 解除 creation 关联 taskId {} creationVersionId {}", taskId, task.getCreationVersionId());
+            task.setCreationVersionId(null);
         }
 
         try {

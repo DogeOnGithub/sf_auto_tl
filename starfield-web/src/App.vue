@@ -132,7 +132,7 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <TaskList ref="taskListRef" :limit="3" />
         </div>
 
-        <div v-if="activeMenu === 'history'" class="page-content" style="max-width: none">
+        <div v-if="activeMenu === 'history'" class="page-content">
           <h2 class="page-title">翻译历史</h2>
           <TaskHistory />
         </div>
@@ -147,12 +147,12 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <DictionaryManager />
         </div>
 
-        <div v-if="activeMenu === 'creations'" class="page-content" style="max-width: none">
+        <div v-if="activeMenu === 'creations'" class="page-content">
           <h2 class="page-title">Creations</h2>
           <CreationManager :is-starborn="isStarborn" />
         </div>
 
-        <div v-if="activeMenu === 'cache'" class="page-content" style="max-width: none">
+        <div v-if="activeMenu === 'cache'" class="page-content">
           <h2 class="page-title">翻译缓存</h2>
           <CacheManager :is-starborn="isStarborn" />
         </div>
@@ -208,7 +208,8 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 }
 
 .page-content {
-  max-width: 960px;
+  max-width: 80%;
+  margin: 0 auto;
 }
 
 .home-page {

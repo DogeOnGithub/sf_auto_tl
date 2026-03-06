@@ -52,12 +52,25 @@ public class TaskController {
      * @param size 每页大小
      * @return 分页响应
      */
+    /**
+     * 分页查询翻译任务列表（支持状态、文件名、是否关联 creation 过滤）
+     *
+     * @param page        页码
+     * @param size        每页大小
+     * @param status      任务状态过滤（可选）
+     * @param fileName    文件名搜索（可选，模糊匹配）
+     * @param hasCreation 是否关联 creation（可选，true/false）
+     * @return 分页响应
+     */
     @GetMapping("/page")
     public ResponseEntity<TaskPageResponse> listTasksPaged(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        log.info("[listTasksPaged] 分页查询任务 page {} size {}", page, size);
-        var result = taskService.listTasksPaged(page, size);
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String fileName,
+            @RequestParam(required = false) Boolean hasCreation) {
+        log.info("[listTasksPaged] 分页查询任务 page {} size {} status {} fileName {} hasCreation {}", page, size, status, fileName, hasCreation);
+        var result = taskService.listTasksPaged(page, size, status, fileName, hasCreation);
         return ResponseEntity.ok(result);
     }
 
