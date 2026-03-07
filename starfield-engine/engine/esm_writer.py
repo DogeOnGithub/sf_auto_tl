@@ -13,6 +13,7 @@ from typing import Dict, Optional
 from engine.esm_parser import (
     COMPRESSED_FLAG,
     GRUP_HEADER_SIZE,
+    NON_TRANSLATABLE_OVERRIDES,
     RECORD_HEADER_SIZE,
     SUBRECORD_HEADER_SIZE,
     TRANSLATABLE_COMBINATIONS,
@@ -92,7 +93,8 @@ def _rewrite_subrecords(
         sub_data = data[offset + SUBRECORD_HEADER_SIZE : offset + SUBRECORD_HEADER_SIZE + sub_size]
 
         is_translatable = (
-            sub_type in TRANSLATABLE_SUBRECORD_TYPES
+            (sub_type in TRANSLATABLE_SUBRECORD_TYPES
+             and (record_type, sub_type) not in NON_TRANSLATABLE_OVERRIDES)
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
         if is_translatable and sub_size > 0:

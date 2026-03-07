@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 # 包含可翻译文本的子记录类型（任意记录类型下都翻译）
 TRANSLATABLE_SUBRECORD_TYPES = frozenset({b"FULL", b"DESC", b"NNAM", b"SHRT", b"RNAM"})
 
+# 排除规则：特定记录类型下的子记录虽然在通用列表中，但实际包含二进制数据
+# 格式: (record_type, subrecord_type)
+# NPC_:RNAM = 种族 FormID 引用（4 字节二进制），NPC_:NNAM = 二进制数据
+# SMQN:NNAM = Story Manager Quest Node 二进制数据
+NON_TRANSLATABLE_OVERRIDES = frozenset({
+    (b"NPC_", b"RNAM"),   # NPC 种族 FormID 引用（4 字节二进制）
+    (b"NPC_", b"NNAM"),   # NPC 二进制数据（非任务目标文本）
+    (b"SMQN", b"NNAM"),   # Story Manager Quest Node 二进制数据
+})
+
 # 需要按"记录类型 + 子记录类型"组合判断的可翻译条目
 # 格式: (record_type, subrecord_type)
 TRANSLATABLE_COMBINATIONS = frozenset({
@@ -152,7 +162,8 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
             editor_id = _decode_text(data[offset : offset + sub_size])
 
         is_translatable = (
-            sub_type in TRANSLATABLE_SUBRECORD_TYPES
+            (sub_type in TRANSLATABLE_SUBRECORD_TYPES
+             and (record_type, sub_type) not in NON_TRANSLATABLE_OVERRIDES)
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
 

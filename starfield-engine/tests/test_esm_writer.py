@@ -558,7 +558,7 @@ class TestNonPrintableSubrecordCounting:
     def test_multiple_printable_with_non_printable_interleaved(self):
         """多个可打印 FULL 之间夹杂非可打印 FULL 时编号应正确。"""
         sub1 = build_subrecord(b"FULL", null_terminated("First"))
-        sub_bin = build_subrecord(b"FULL", b"\xff\xfe\xfd\x00")
+        sub_bin = build_subrecord(b"FULL", b"\x01\x02\x03\x00")
         sub2 = build_subrecord(b"FULL", null_terminated("Second"))
 
         rec = build_record(b"WEAP", 0x00000900, sub1 + sub_bin + sub2)
