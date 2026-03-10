@@ -720,13 +720,23 @@ public class TaskService {
      * 清理过期任务的 COS 文件并标记为 expired
      * 条件：任务创建超过 5 天且未关联 creation
      */
+    /**
+     * 每天凌晨 3 点清理过期任务 复用 expireTask 确保清理逻辑一致
+     */
+    /**
+     * 每天凌晨 3 点清理过期任务 复用 expireTask 确保清理逻辑一致
+     * 清理条件：创建超过 5 天、未关联 creation 的已完成任务或待确认任务
+     */
     public void cleanupExpiredTasks() {
-        var cutoff = LocalDateTime.now().minusDays(TASK_EXPIRATION_DAYS);
+        var cutoff = LocalDateTime.now().minusDays(TASK_EXPIRATION_DAYS).toLocalDate().atStartOfDay();
         var wrapper = new QueryWrapper<TranslationTask>()
-                .eq("status", TaskStatus.completed.name())
                 .isNull("creation_version_id")
-                .isNotNull("download_url")
-                .le("created_at", cutoff);
+                .le("created_at", cutoff)
+                .and(w -> w
+                        .eq("status", TaskStatus.completed.name()).isNotNull("download_url")
+                        .or()
+                        .eq("status", TaskStatus.pending_confirmation.name())
+                );
         var tasks = translationTaskRepository.selectList(wrapper);
 
         if (tasks.isEmpty()) {
@@ -736,19 +746,10 @@ public class TaskService {
 
         log.info("[cleanupExpiredTasks] 发现过期任务 count {}", tasks.size());
 
-        var expiredCount = 0;
-        for (var task : tasks) {
-            try {
-                deleteCosFile(task);
-                task.setStatus(TaskStatus.expired);
-                task.setDownloadUrl(null);
-                translationTaskRepository.updateById(task);
-                expiredCount++;
-                log.info("[cleanupExpiredTasks] 任务已过期 taskId {}", task.getTaskId());
-            } catch (Exception e) {
-                log.error("[cleanupExpiredTasks] 清理失败 taskId {}", task.getTaskId(), e);
-            }
-        }
+        var taskIds = tasks.stream()
+                .map(TranslationTask::getTaskId)
+                .collect(Collectors.toList());
+        var expiredCount = batchExpireTasks(taskIds);
 
         log.info("[cleanupExpiredTasks] 清理完成 expiredCount {}", expiredCount);
     }
