@@ -30,7 +30,7 @@ export function uploadFile(
   }
   return api
     .post<FileUploadResponse>('/api/files/upload', formData, {
-      timeout: 300000,
+      timeout: 1800000,
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (e) => {
         if (onProgress && e.total) {

@@ -8,7 +8,7 @@ import { listPrompts } from '@/services/promptApi'
 import type { FileUploadResponse, Creation, PromptItem } from '@/types'
 import type { UploadRequestOptions } from 'element-plus'
 
-const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
+const MAX_FILE_SIZE = 4096 * 1024 * 1024 // 4096MB
 
 const emit = defineEmits<{
   'upload-success': [payload: FileUploadResponse]
@@ -95,7 +95,7 @@ function beforeUpload(file: File): boolean {
     return false
   }
   if (file.size > MAX_FILE_SIZE) {
-    ElMessage.error('文件大小不能超过 200MB')
+    ElMessage.error('文件大小不能超过 4GB')
     return false
   }
   if (linkMode.value && !selectedVersionId.value) {
@@ -283,7 +283,7 @@ async function handleUpload(options: UploadRequestOptions) {
       <div v-else class="upload-placeholder">
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
         <p class="upload-text">将 ESM/ESP 文件拖拽到此处，或 <em>点击选择文件</em></p>
-        <p class="upload-hint">支持 .esm / .esp 格式，最大 200MB</p>
+        <p class="upload-hint">支持 .esm / .esp 格式，最大 4GB</p>
       </div>
     </el-upload>
   </div>
