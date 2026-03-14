@@ -40,6 +40,9 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"BOOK", b"CNAM"),   # 书籍正文内容
     (b"MGEF", b"DNAM"),   # 魔法效果描述
     (b"LVLN", b"ONAM"),   # 等级列表 NPC 覆盖名称
+    (b"GPOF", b"DNAM"),   # 游戏设置选项描述
+    (b"GPOF", b"VOVS"),   # 游戏设置选项值描述
+    (b"AVIF", b"NLDT"),   # Actor Value 长描述文本
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
