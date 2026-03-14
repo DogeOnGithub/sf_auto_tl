@@ -23,6 +23,12 @@ SUBRECORD_HEADER_SIZE = 6
 
 KNOWN_TRANSLATABLE = frozenset({b"FULL", b"DESC", b"NNAM", b"SHRT", b"TNAM", b"RNAM"})
 
+# 从 parser 导入组合规则，用于判断"已收录"
+from engine.esm_parser import TRANSLATABLE_COMBINATIONS as _TC
+_KNOWN_COMBINATIONS = frozenset(
+    (rt.decode("ascii"), st.decode("ascii")) for rt, st in _TC
+)
+
 # 已知永远不需要翻译的子记录类型
 KNOWN_INTERNAL = frozenset({"EDID", "MODL", "BFCB", "VMAD"})
 
@@ -290,7 +296,10 @@ def main():
             continue
 
         verdict, detail = classify_group(samples)
-        known = sub_type.encode("ascii", errors="replace") in KNOWN_TRANSLATABLE
+        known = (
+            sub_type.encode("ascii", errors="replace") in KNOWN_TRANSLATABLE
+            or (rec_type, sub_type) in _KNOWN_COMBINATIONS
+        )
         entry = (rec_type, sub_type, len(samples), detail, samples, known)
 
         if verdict == "TRANSLATE":

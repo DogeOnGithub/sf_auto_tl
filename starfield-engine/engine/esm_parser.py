@@ -43,6 +43,9 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"GPOF", b"DNAM"),   # 游戏设置选项描述
     (b"GPOF", b"VOVS"),   # 游戏设置选项值描述
     (b"AVIF", b"NLDT"),   # Actor Value 长描述文本
+    (b"QUST", b"QMDP"),   # 任务标记显示参数
+    (b"QUST", b"QMDT"),   # 任务标记显示标题
+    (b"QUST", b"QMSU"),   # 任务摘要文本
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
