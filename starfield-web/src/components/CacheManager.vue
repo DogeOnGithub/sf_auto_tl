@@ -104,7 +104,11 @@ function handlePageChange(page: number) {
   loadEntries()
 }
 
-/** 打开编辑弹窗 */
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadEntries()
+}
 function openEditDialog(entry: CacheEntry) {
   editingEntry.value = entry
   editingText.value = entry.targetText
@@ -192,13 +196,15 @@ onMounted(() => {
         </template>
       </el-table-column>
     </el-table>
-    <div class="pagination-wrap" v-if="total > pageSize">
+    <div class="pagination-wrap" v-if="total > 0">
       <el-pagination
-        layout="prev, pager, next"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
         :total="total"
-        :page-size="pageSize"
-        :current-page="currentPage"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
         @current-change="handlePageChange"
+        @size-change="handleSizeChange"
       />
     </div>
   </el-card>

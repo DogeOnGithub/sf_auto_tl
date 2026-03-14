@@ -16,7 +16,7 @@ const loading = ref(false)
 
 /** 分页状态 */
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(20)
 const total = ref(0)
 
 /** 筛选状态 */
@@ -145,7 +145,11 @@ function handlePageChange(page: number) {
   loadTasks()
 }
 
-/** 切换状态 tab 时重置分页 */
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadTasks()
+}
 function handleStatusChange() {
   currentPage.value = 1
   loadTasks()
@@ -293,13 +297,15 @@ onUnmounted(() => {
       <el-icon class="is-loading" :size="24"><Loading /></el-icon>
     </div>
 
-    <div v-if="total > pageSize" class="pagination">
+    <div v-if="total > 0" class="pagination">
       <el-pagination
-        :current-page="currentPage"
-        :page-size="pageSize"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
         :total="total"
-        layout="prev, pager, next"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
         @current-change="handlePageChange"
+        @size-change="handleSizeChange"
       />
     </div>
 

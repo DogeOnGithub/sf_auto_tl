@@ -102,6 +102,11 @@ function handlePageChange(page: number) {
   loadCreations()
 }
 
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadCreations()
+}
 /** 打开上传对话框 */
 function openUploadDialog() {
   form.value = { name: '', translatedName: '', author: '', ccLink: '', nexusLink: '', version: '', fileShareLink: '', remark: '', tags: '' }
@@ -502,8 +507,16 @@ onMounted(() => {
     <el-empty v-if="!loading && creations.length === 0" description="暂无作品" />
 
     <!-- 分页 -->
-    <div v-if="total > pageSize" class="pagination">
-      <el-pagination :current-page="currentPage" :page-size="pageSize" :total="total" layout="prev, pager, next" @current-change="handlePageChange" />
+    <div v-if="total > 0" class="pagination">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[12, 24, 48]"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="handlePageChange"
+        @size-change="handleSizeChange"
+      />
     </div>
 
     <!-- 上传对话框 -->
@@ -594,7 +607,7 @@ onMounted(() => {
     </el-dialog>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="showDrawer" title="创作详情" size="900px">
+    <el-drawer v-model="showDrawer" title="创作详情" size="1100px">
       <template v-if="selectedCreation">
         <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-section">
           <div class="detail-images-scroll">
@@ -630,7 +643,7 @@ onMounted(() => {
           </div>
           <el-table :data="selectedCreation.versions" border size="small" style="width: 100%">
             <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column label="Mod 文件" min-width="180">
+            <el-table-column label="Mod 文件" min-width="240">
               <template #default="{ row }">
                 <div v-if="uploadingVersionId === row.id && uploadType === 'file'" style="padding: 4px 0;">
                   <el-progress :percentage="uploadProgress" :stroke-width="6" />
@@ -646,7 +659,7 @@ onMounted(() => {
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="分享链接" min-width="200">
+            <el-table-column label="分享链接" width="140">
               <template #default="{ row }">
                 <div style="display: flex; align-items: center; gap: 4px;">
                   <el-tooltip v-if="isValidUrl(row.fileShareLink)" :content="row.fileShareLink" placement="top" :show-after="300">
@@ -657,7 +670,7 @@ onMounted(() => {
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="汉化补丁" min-width="180">
+            <el-table-column label="汉化补丁" min-width="240">
               <template #default="{ row }">
                 <div v-if="uploadingVersionId === row.id && uploadType === 'patch'" style="padding: 4px 0;">
                   <el-progress :percentage="uploadProgress" :stroke-width="6" />
@@ -780,7 +793,7 @@ onMounted(() => {
 .detail-image { flex-shrink: 0; width: 160px; height: 120px; border-radius: 4px; }
 .detail-remark { margin: 0; font-size: 13px; color: var(--el-text-color-regular); white-space: pre-wrap; }
 .detail-actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--el-border-color-lighter); }
-.patch-filename { font-size: 12px; color: var(--el-text-color-regular); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.patch-filename { font-size: 12px; color: var(--el-text-color-regular); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .image-upload-paste-zone { outline: none; border: 1px dashed transparent; border-radius: 6px; padding: 4px; transition: border-color 0.2s; }
 .image-upload-paste-zone:focus { border-color: var(--el-color-primary); }
 .paste-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 4px; }
