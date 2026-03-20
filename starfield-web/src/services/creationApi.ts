@@ -75,3 +75,23 @@ export function uploadFile(versionId: number, file: File, onProgress?: (percent:
   }).then((res) => res.data)
 }
 
+/** 为作品添加图片 */
+export function uploadCreationImages(creationId: number, files: File[]): Promise<Creation> {
+  var fd = new FormData()
+  files.forEach(f => fd.append('images', f))
+  return api.post<Creation>(`/api/creations/${creationId}/images`, fd, {
+    timeout: 300000,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((res) => res.data)
+}
+
+/** 删除作品图片 */
+export function deleteCreationImage(imageId: number): Promise<void> {
+  return api.delete(`/api/creations/images/${imageId}`).then(() => {})
+}
+
+/** 重新排序作品图片 */
+export function reorderCreationImages(creationId: number, imageIds: number[]): Promise<void> {
+  return api.put(`/api/creations/${creationId}/images/reorder`, { imageIds }).then(() => {})
+}
+

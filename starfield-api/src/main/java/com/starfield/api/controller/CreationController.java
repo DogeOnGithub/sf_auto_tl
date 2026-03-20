@@ -182,4 +182,49 @@ public class CreationController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 为作品添加图片
+     *
+     * @param id     作品 ID
+     * @param images 图片文件列表
+     * @return 作品响应
+     */
+    @PostMapping(value = "/{id}/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<CreationResponse> addImages(
+            @PathVariable Long id,
+            @RequestPart("images") List<MultipartFile> images) {
+        log.info("[addImages] 收到添加图片请求 id {} count {}", id, images.size());
+        var response = creationService.addImages(id, images);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 删除作品图片
+     *
+     * @param imageId 图片 ID
+     * @return 204 No Content
+     */
+    @DeleteMapping("/images/{imageId}")
+    public ResponseEntity<Void> deleteImage(@PathVariable Long imageId) {
+        log.info("[deleteImage] 收到删除图片请求 imageId {}", imageId);
+        creationService.deleteImage(imageId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 重新排序作品图片
+     *
+     * @param id   作品 ID
+     * @param body 包含 imageIds 的请求体
+     * @return 204 No Content
+     */
+    @PutMapping("/{id}/images/reorder")
+    public ResponseEntity<Void> reorderImages(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, java.util.List<Long>> body) {
+        log.info("[reorderImages] 收到图片排序请求 id {}", id);
+        creationService.reorderImages(id, body.get("imageIds"));
+        return ResponseEntity.noContent().build();
+    }
+
 }

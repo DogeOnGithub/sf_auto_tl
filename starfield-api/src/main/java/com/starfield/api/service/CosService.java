@@ -121,6 +121,15 @@ public class CosService {
     }
 
     /**
+     * 获取 COS baseUrl 配置
+     *
+     * @return baseUrl
+     */
+    public String getBaseUrl() {
+        return cosProperties.baseUrl();
+    }
+
+    /**
      * 删除 COS 对象
      *
      * @param cosKey COS 对象键

@@ -2,9 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
-import type { Creation, TaskResponse } from '@/types'
+import type { Creation, CreationImage, TaskResponse } from '@/types'
+import draggable from 'vuedraggable'
 
 const props = defineProps<{ isStarborn: boolean }>()
 
@@ -68,6 +69,9 @@ const versionModFile = ref<File | null>(null)
 
 /** 预设标签列表 */
 const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园', '飞船']
+
+/** 详情抽屉图片上传状态 */
+const uploadingDetailImage = ref(false)
 
 /** 格式化时间 */
 function formatTime(dateStr: string): string {
@@ -378,6 +382,54 @@ async function handleAddVersionSubmit() {
   }
 }
 
+/** 详情抽屉添加图片 */
+async function handleDetailImageAdd(_uploadFile: any, uploadFiles: any[]) {
+  if (!selectedCreation.value) return
+  var files = uploadFiles.map((f: any) => f.raw).filter(Boolean)
+  if (files.length === 0) return
+  uploadingDetailImage.value = true
+  try {
+    var result = await uploadCreationImages(selectedCreation.value.id, files)
+    selectedCreation.value = result
+    loadCreations()
+    ElMessage.success('图片上传成功')
+  } catch {
+    ElMessage.error('图片上传失败')
+  } finally {
+    uploadingDetailImage.value = false
+  }
+}
+
+/** 详情抽屉删除图片 */
+async function handleDetailImageDelete(imageId: number) {
+  if (!selectedCreation.value) return
+  if (selectedCreation.value.images.length <= 1) {
+    ElMessage.warning('至少保留一张图片')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('确定删除该图片？', '提示', { type: 'warning' })
+    await deleteCreationImage(imageId)
+    ElMessage.success('图片已删除')
+    var detail = await getCreation(selectedCreation.value.id)
+    selectedCreation.value = detail
+    loadCreations()
+  } catch { /* 取消 */ }
+}
+
+/** 拖拽排序结束后保存顺序 */
+async function handleImageSortEnd() {
+  if (!selectedCreation.value) return
+  var imageIds = selectedCreation.value.images.map((img: CreationImage) => img.id)
+  try {
+    await reorderCreationImages(selectedCreation.value.id, imageIds)
+  } catch {
+    ElMessage.error('排序保存失败')
+    var detail = await getCreation(selectedCreation.value.id)
+    selectedCreation.value = detail
+  }
+}
+
 /** 上传汉化补丁 */
 async function handleUploadPatch(versionId: number, uploadFile: any) {
   uploadingVersionId.value = versionId
@@ -609,10 +661,30 @@ onMounted(() => {
     <!-- 详情抽屉 -->
     <el-drawer v-model="showDrawer" title="创作详情" size="1100px">
       <template v-if="selectedCreation">
-        <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-section">
-          <div class="detail-images-scroll">
-            <el-image v-for="img in selectedCreation.images" :key="img.id" :src="img.url" fit="cover" class="detail-image" :preview-src-list="selectedCreation.images.map(i => i.url)" :preview-teleported="true" :z-index="3000" />
+        <div class="detail-section">
+          <div class="detail-header">
+            <h4>图片</h4>
+            <el-upload v-if="props.isStarborn" :auto-upload="false" :show-file-list="false" accept="image/*" multiple :on-change="handleDetailImageAdd">
+              <el-button text type="primary" :icon="Plus" :loading="uploadingDetailImage">添加图片</el-button>
+            </el-upload>
           </div>
+          <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-images-scroll">
+            <draggable v-if="props.isStarborn" v-model="selectedCreation.images" item-key="id" class="detail-images-drag" :animation="200" @end="handleImageSortEnd">
+              <template #item="{ element: img, index: idx }">
+                <div class="detail-image-wrapper">
+                  <el-image :src="img.url" fit="cover" class="detail-image" :preview-src-list="selectedCreation.images.map((i: CreationImage) => i.url)" :initial-index="idx" :preview-teleported="true" :z-index="3000" />
+                  <el-button v-if="selectedCreation.images.length > 1" class="detail-image-delete" :icon="Delete" circle size="small" type="danger" @click.stop="handleDetailImageDelete(img.id)" />
+                  <span class="detail-image-drag-hint">⠿</span>
+                </div>
+              </template>
+            </draggable>
+            <template v-else>
+              <div v-for="(img, idx) in selectedCreation.images" :key="img.id" class="detail-image-wrapper">
+                <el-image :src="img.url" fit="cover" class="detail-image" :preview-src-list="selectedCreation.images.map((i: CreationImage) => i.url)" :initial-index="idx" :preview-teleported="true" :z-index="3000" />
+              </div>
+            </template>
+          </div>
+          <el-empty v-else description="暂无图片" :image-size="60" />
         </div>
 
         <div class="detail-section">
@@ -791,6 +863,13 @@ onMounted(() => {
 .detail-images-scroll::-webkit-scrollbar { height: 6px; }
 .detail-images-scroll::-webkit-scrollbar-thumb { background: var(--el-border-color); border-radius: 3px; }
 .detail-image { flex-shrink: 0; width: 160px; height: 120px; border-radius: 4px; }
+.detail-image-wrapper { position: relative; flex-shrink: 0; cursor: grab; }
+.detail-image-wrapper:active { cursor: grabbing; }
+.detail-image-delete { position: absolute; top: 4px; right: 4px; opacity: 0; transition: opacity 0.2s; }
+.detail-image-wrapper:hover .detail-image-delete { opacity: 1; }
+.detail-image-drag-hint { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 14px; color: rgba(255,255,255,0.7); opacity: 0; transition: opacity 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); pointer-events: none; }
+.detail-image-wrapper:hover .detail-image-drag-hint { opacity: 1; }
+.detail-images-drag { display: flex; gap: 8px; }
 .detail-remark { margin: 0; font-size: 13px; color: var(--el-text-color-regular); white-space: pre-wrap; }
 .detail-actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--el-border-color-lighter); }
 .patch-filename { font-size: 12px; color: var(--el-text-color-regular); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

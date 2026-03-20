@@ -342,13 +342,86 @@ public class CreationService {
     }
 
     /**
-     * 删除指定版本
+     * 删除指定版本（同时清理 COS 上的 mod 文件和汉化补丁文件）
      *
      * @param versionId 版本 ID
      */
     public void deleteVersion(Long versionId) {
         log.info("[deleteVersion] 删除版本 versionId {}", versionId);
+        var version = creationVersionRepository.selectById(versionId);
+        if (Objects.nonNull(version)) {
+            deleteCosFile(version.getFilePath());
+            deleteCosFile(version.getPatchFilePath());
+        }
         creationVersionRepository.deleteById(versionId);
+    }
+
+    /**
+     * 为作品添加图片
+     *
+     * @param creationId 作品 ID
+     * @param images     图片文件列表
+     * @return 作品响应
+     */
+    public CreationResponse addImages(Long creationId, List<MultipartFile> images) {
+        log.info("[addImages] 添加图片 creationId {} count {}", creationId, images.size());
+        var creation = creationRepository.selectById(creationId);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(creationId);
+        }
+        saveImages(creationId, images);
+        return toResponse(creation, getVersionInfos(creationId), getImageInfos(creationId));
+    }
+
+    /**
+     * 删除作品图片（同时清理 COS 文件）
+     *
+     * @param imageId 图片 ID
+     */
+    public void deleteImage(Long imageId) {
+        log.info("[deleteImage] 删除图片 imageId {}", imageId);
+        var image = creationImageRepository.selectById(imageId);
+        if (Objects.nonNull(image)) {
+            deleteCosFile(image.getImagePath());
+        }
+        creationImageRepository.deleteById(imageId);
+    }
+
+    /**
+     * 重新排序作品图片
+     *
+     * @param creationId 作品 ID
+     * @param imageIds   按新顺序排列的图片 ID 列表
+     */
+    public void reorderImages(Long creationId, List<Long> imageIds) {
+        log.info("[reorderImages] 重新排序图片 creationId {} imageIds {}", creationId, imageIds);
+        for (int i = 0; i < imageIds.size(); i++) {
+            var image = creationImageRepository.selectById(imageIds.get(i));
+            if (Objects.nonNull(image) && image.getCreationId().equals(creationId)) {
+                image.setSortOrder(i);
+                creationImageRepository.updateById(image);
+            }
+        }
+    }
+
+    /**
+     * 根据 COS URL 提取 cosKey 并删除对象（忽略异常）
+     *
+     * @param cosUrl COS 公有读 URL
+     */
+    private void deleteCosFile(String cosUrl) {
+        if (Objects.isNull(cosUrl) || cosUrl.isBlank()) return;
+        try {
+            var baseUrl = cosService.getBaseUrl();
+            if (cosUrl.startsWith(baseUrl + "/")) {
+                var cosKey = cosUrl.substring(baseUrl.length() + 1);
+                cosService.deleteObject(cosKey);
+            } else {
+                log.warn("[deleteCosFile] URL 不匹配 COS baseUrl cosUrl {}", cosUrl);
+            }
+        } catch (Exception e) {
+            log.warn("[deleteCosFile] 删除 COS 文件失败 cosUrl {}", cosUrl, e);
+        }
     }
 
     /**
