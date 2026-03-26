@@ -14,6 +14,7 @@ import com.starfield.api.repository.CreationVersionRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
 import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -48,13 +49,8 @@ public class CreationService {
     public CreationResponse create(CreationRequest request, MultipartFile file, List<MultipartFile> images) {
         log.info("[create] 创建作品 name {} version {}", request.name(), request.version());
 
-        // 查找已存在的同一 mod（按名称、CC 链接、N 网链接匹配）
-        var existing = findExistingCreation(request);
-
-        if (Objects.nonNull(existing)) {
-            log.info("[create] 匹配到已有作品 id {} name {}", existing.getId(), existing.getName());
-            return addVersion(existing, request, file, images);
-        }
+        // 检查是否与已有 mod 冲突（按名称、CC 链接、N 网链接匹配）
+        checkDuplicateCreation(request);
 
         var creation = new Creation();
         creation.setName(request.name());
@@ -77,23 +73,27 @@ public class CreationService {
     }
 
     /**
-     * 查找已存在的同一 mod（按名称、CC 链接最后一段、N 网链接匹配）
+     * 检查是否与已有 mod 冲突（按名称、CC 链接 details ID、N 网链接匹配）
      */
-    private Creation findExistingCreation(CreationRequest request) {
+    private void checkDuplicateCreation(CreationRequest request) {
         // 1. 按名称匹配
         var byName = creationRepository.selectOne(new QueryWrapper<Creation>().eq("name", request.name()));
-        if (Objects.nonNull(byName)) return byName;
+        if (Objects.nonNull(byName)) {
+            throw new DuplicateCreationException(byName.getId(), byName.getName(), "名称");
+        }
 
-        // 2. 按 CC 链接最后一段路径匹配（忽略 lang 参数等差异）
-        var requestCcSlug = extractCcSlug(request.ccLink());
-        if (Objects.nonNull(requestCcSlug)) {
+        // 2. 按 CC 链接 details ID 匹配（忽略 lang 和 slug 差异）
+        var requestCcId = extractCcDetailsId(request.ccLink());
+        if (Objects.nonNull(requestCcId)) {
             var ccCandidates = creationRepository.selectList(
                     new QueryWrapper<Creation>().isNotNull("cc_link").ne("cc_link", ""));
             var byCc = ccCandidates.stream()
-                    .filter(c -> requestCcSlug.equals(extractCcSlug(c.getCcLink())))
+                    .filter(c -> requestCcId.equals(extractCcDetailsId(c.getCcLink())))
                     .findFirst()
                     .orElse(null);
-            if (Objects.nonNull(byCc)) return byCc;
+            if (Objects.nonNull(byCc)) {
+                throw new DuplicateCreationException(byCc.getId(), byCc.getName(), "CC 链接");
+            }
         }
 
         // 3. 按 N 网链接匹配（提取路径部分比较，忽略 query 参数）
@@ -105,28 +105,32 @@ public class CreationService {
                     .filter(c -> requestNexusPath.equals(extractUrlPath(c.getNexusLink())))
                     .findFirst()
                     .orElse(null);
-            if (Objects.nonNull(byNexus)) return byNexus;
+            if (Objects.nonNull(byNexus)) {
+                throw new DuplicateCreationException(byNexus.getId(), byNexus.getName(), "Nexus 链接");
+            }
         }
-
-        return null;
     }
 
     /**
-     * 提取 CC 链接的最后一段路径作为标识（忽略 lang 等路径参数差异）
-     * 例如 https://creations.bethesda.net/en/starfield/details/xxx/name → name
+     * 提取 CC 链接中 details 后的 ID 段作为唯一标识
+     * 例如 https://creations.bethesda.net/en/starfield/details/abc123/my-mod → abc123
      */
-    private String extractCcSlug(String ccLink) {
+    private String extractCcDetailsId(String ccLink) {
         if (Objects.isNull(ccLink) || ccLink.isBlank()) return null;
         try {
             var uri = java.net.URI.create(ccLink);
             var path = uri.getPath();
             if (Objects.isNull(path) || path.isBlank()) return null;
-            // 去掉末尾斜杠后取最后一段
-            if (path.endsWith("/")) path = path.substring(0, path.length() - 1);
-            var lastSlash = path.lastIndexOf('/');
-            return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+            // 查找 /details/ 后面的第一段作为 ID
+            var segments = path.split("/");
+            for (int i = 0; i < segments.length - 1; i++) {
+                if ("details".equals(segments[i])) {
+                    return segments[i + 1];
+                }
+            }
+            return null;
         } catch (Exception e) {
-            log.warn("[extractCcSlug] 解析 CC 链接失败 ccLink {}", ccLink);
+            log.warn("[extractCcDetailsId] 解析 CC 链接失败 ccLink {}", ccLink);
             return null;
         }
     }
@@ -146,23 +150,6 @@ public class CreationService {
             log.warn("[extractUrlPath] 解析 URL 失败 url {}", url);
             return null;
         }
-    }
-
-    /**
-     * 为已有作品添加新版本
-     */
-    private CreationResponse addVersion(Creation creation, CreationRequest request, MultipartFile file, List<MultipartFile> images) {
-        log.info("[addVersion] 为作品添加版本 creationId {} version {}", creation.getId(), request.version());
-
-        // 检查版本是否重复
-        checkDuplicateVersion(creation.getId(), request.version());
-
-        var versionInfo = createVersion(creation.getId(), request.version(), request.fileShareLink(), file);
-
-        // 如果有新图片也保存
-        saveImages(creation.getId(), images);
-
-        return toResponse(creation, getVersionInfos(creation.getId()), getImageInfos(creation.getId()));
     }
 
     /**
@@ -548,6 +535,23 @@ public class CreationService {
     public static class DuplicateVersionException extends RuntimeException {
         public DuplicateVersionException(Long creationId, String version) {
             super("版本已存在 creationId " + creationId + " version " + version);
+        }
+    }
+
+    /**
+     * 作品重复异常（名称、CC 链接或 Nexus 链接与已有作品冲突）
+     */
+    @Getter
+    public static class DuplicateCreationException extends RuntimeException {
+        private final Long existingId;
+        private final String existingName;
+        private final String matchType;
+
+        public DuplicateCreationException(Long existingId, String existingName, String matchType) {
+            super("作品已存在 existingId " + existingId + " existingName " + existingName + " matchType " + matchType);
+            this.existingId = existingId;
+            this.existingName = existingName;
+            this.matchType = matchType;
         }
     }
 }

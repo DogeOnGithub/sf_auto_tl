@@ -155,6 +155,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理作品重复异常
+     */
+    @ExceptionHandler(CreationService.DuplicateCreationException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateCreation(CreationService.DuplicateCreationException e) {
+        log.warn("[handleDuplicateCreation] {}", e.getMessage());
+        var message = "与已有作品「" + e.getExistingName() + "」冲突（匹配方式 " + e.getMatchType() + "）";
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("DUPLICATE_CREATION", message));
+    }
+
+    /**
      * 处理任务关联 creation 不允许清理异常
      */
     @ExceptionHandler(TaskService.TaskLinkedToCreationException.class)
