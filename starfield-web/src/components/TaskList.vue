@@ -92,6 +92,8 @@ function addTask(taskId: string) {
     progress: { translated: 0, total: 0 },
     creation: null,
     prompt: null,
+    llm: null,
+    errorMessage: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
