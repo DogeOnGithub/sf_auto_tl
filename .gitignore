@@ -19,6 +19,7 @@ starfield-api/.jqwik-database
 
 # Python
 starfield-engine/.venv/
+starfield-engine/starfield_engine.egg-info/
 starfield-engine/__pycache__/
 starfield-engine/**/__pycache__/
 starfield-engine/.pytest_cache/
