@@ -58,6 +58,12 @@ public class TranslationTask {
     @TableField("confirmation_mode")
     private String confirmationMode = "direct";
 
+    @TableField("llm_base_url")
+    private String llmBaseUrl;
+
+    @TableField("llm_model")
+    private String llmModel;
+
     @TableField("sync_fail_count")
     private Integer syncFailCount = 0;
 

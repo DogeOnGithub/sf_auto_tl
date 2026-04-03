@@ -35,6 +35,37 @@ const newPromptName = ref('')
 const newPromptContent = ref('')
 const loadingPrompts = ref(false)
 
+/** 自定义 LLM 配置 */
+const LLM_STORAGE_KEY = 'starfield-custom-llm'
+const useCustomLlm = ref(false)
+const llmBaseUrl = ref('')
+const llmApiKey = ref('')
+const llmModel = ref('')
+
+/** 切换「用我的 KEY」时从 localStorage 加载保存的值 */
+function handleCustomLlmChange(val: boolean) {
+  if (val) {
+    try {
+      var saved = localStorage.getItem(LLM_STORAGE_KEY)
+      if (saved) {
+        var parsed = JSON.parse(saved)
+        llmBaseUrl.value = parsed.baseUrl || ''
+        llmApiKey.value = parsed.apiKey || ''
+        llmModel.value = parsed.model || ''
+      }
+    } catch { /* ignore */ }
+  }
+}
+
+/** 保存自定义 LLM 配置到 localStorage */
+function saveLlmConfig() {
+  localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify({
+    baseUrl: llmBaseUrl.value,
+    apiKey: llmApiKey.value,
+    model: llmModel.value,
+  }))
+}
+
 /** 当前选中 creation 的版本列表 */
 const versionOptions = computed(() => {
   if (!selectedCreationId.value) return []
@@ -116,6 +147,20 @@ function beforeUpload(file: File): boolean {
       return false
     }
   }
+  if (useCustomLlm.value) {
+    if (!llmBaseUrl.value.trim()) {
+      ElMessage.warning('请输入 API URL')
+      return false
+    }
+    if (!llmApiKey.value.trim()) {
+      ElMessage.warning('请输入 API Key')
+      return false
+    }
+    if (!llmModel.value.trim()) {
+      ElMessage.warning('请输入模型名称')
+      return false
+    }
+  }
   return true
 }
 
@@ -137,7 +182,13 @@ async function handleUpload(options: UploadRequestOptions) {
       pName || undefined,
       pContent || undefined,
       confirmationMode.value,
+      useCustomLlm.value ? llmBaseUrl.value.trim() : undefined,
+      useCustomLlm.value ? llmApiKey.value.trim() : undefined,
+      useCustomLlm.value ? llmModel.value.trim() : undefined,
     )
+    if (useCustomLlm.value) {
+      saveLlmConfig()
+    }
     ElMessage.success(`文件 ${result.fileName} 上传成功`)
     emit('upload-success', result)
   } catch (err: any) {
@@ -268,6 +319,36 @@ async function handleUpload(options: UploadRequestOptions) {
       </div>
     </div>
 
+    <!-- 自定义 LLM 配置 -->
+    <div class="prompt-section">
+      <div class="prompt-label">LLM 配置</div>
+      <div class="check-tags">
+        <div
+          class="check-tag"
+          :class="{ active: !useCustomLlm }"
+          @click="useCustomLlm = false"
+        >
+          <el-icon v-if="!useCustomLlm" class="check-icon"><Check /></el-icon>
+          <span>系统默认</span>
+        </div>
+        <div
+          class="check-tag"
+          :class="{ active: useCustomLlm }"
+          @click="useCustomLlm = true; handleCustomLlmChange(true)"
+        >
+          <el-icon v-if="useCustomLlm" class="check-icon"><Check /></el-icon>
+          <span>用我的 KEY</span>
+        </div>
+      </div>
+
+      <div v-if="useCustomLlm" class="llm-config">
+        <el-input v-model="llmBaseUrl" placeholder="API URL，如 https://api.deepseek.com/v1" style="margin-bottom: 8px" />
+        <el-input v-model="llmApiKey" placeholder="API Key" type="password" show-password style="margin-bottom: 8px" />
+        <el-input v-model="llmModel" placeholder="模型名称，如 deepseek-reasoner" />
+        <p class="llm-hint">支持 OpenAI 兼容格式的 API（DeepSeek、通义千问、Moonshot、GLM 等）</p>
+      </div>
+    </div>
+
     <el-upload
       drag
       accept=".esm,.esp"
@@ -363,6 +444,16 @@ async function handleUpload(options: UploadRequestOptions) {
 
 .prompt-new {
   margin-top: 10px;
+}
+
+.llm-config {
+  margin-top: 10px;
+}
+
+.llm-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
 }
 
 .upload-placeholder {

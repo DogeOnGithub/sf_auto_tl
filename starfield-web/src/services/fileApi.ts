@@ -1,7 +1,7 @@
 import api from './api'
 import type { FileUploadResponse } from '@/types'
 
-/** 上传 ESM 文件，支持上传进度回调、关联 creation 版本和 Prompt 参数 */
+/** 上传 ESM 文件，支持上传进度回调、关联 creation 版本、Prompt 参数和自定义 LLM 配置 */
 export function uploadFile(
   file: File,
   onProgress?: (percent: number) => void,
@@ -10,6 +10,9 @@ export function uploadFile(
   newPromptName?: string,
   newPromptContent?: string,
   confirmationMode?: string,
+  llmBaseUrl?: string,
+  llmApiKey?: string,
+  llmModel?: string,
 ): Promise<FileUploadResponse> {
   var formData = new FormData()
   formData.append('file', file)
@@ -27,6 +30,15 @@ export function uploadFile(
   }
   if (confirmationMode) {
     formData.append('confirmationMode', confirmationMode)
+  }
+  if (llmBaseUrl) {
+    formData.append('llmBaseUrl', llmBaseUrl)
+  }
+  if (llmApiKey) {
+    formData.append('llmApiKey', llmApiKey)
+  }
+  if (llmModel) {
+    formData.append('llmModel', llmModel)
   }
   return api
     .post<FileUploadResponse>('/api/files/upload', formData, {

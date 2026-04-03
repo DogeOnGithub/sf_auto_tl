@@ -13,6 +13,8 @@ public record TaskResponse(
         Progress progress,
         CreationInfo creation,
         PromptInfo prompt,
+        LlmInfo llm,
+        String errorMessage,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
@@ -36,4 +38,9 @@ public record TaskResponse(
      * 关联的 Prompt 信息
      */
     public record PromptInfo(Long id, String name) {}
+
+    /**
+     * 任务使用的 LLM 配置（仅自定义时有值）
+     */
+    public record LlmInfo(String baseUrl, String model) {}
 }

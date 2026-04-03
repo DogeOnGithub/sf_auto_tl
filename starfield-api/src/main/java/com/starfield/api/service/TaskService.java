@@ -286,6 +286,10 @@ public class TaskService {
                 promptInfo = new TaskResponse.PromptInfo(prompt.getId(), prompt.getName());
             }
         }
+        TaskResponse.LlmInfo llmInfo = null;
+        if (Objects.nonNull(task.getLlmBaseUrl()) || Objects.nonNull(task.getLlmModel())) {
+            llmInfo = new TaskResponse.LlmInfo(task.getLlmBaseUrl(), task.getLlmModel());
+        }
         return new TaskResponse(
                 task.getTaskId(),
                 task.getFileName(),
@@ -294,6 +298,8 @@ public class TaskService {
                 new TaskResponse.Progress(task.getTranslatedCount(), task.getTotalCount()),
                 creationInfo,
                 promptInfo,
+                llmInfo,
+                task.getErrorMessage(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );

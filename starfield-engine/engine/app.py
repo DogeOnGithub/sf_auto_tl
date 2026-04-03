@@ -38,8 +38,11 @@ def create_app() -> Flask:
         dictionary_entries = data.get("dictionaryEntries")
         callback_url = data.get("callbackUrl")
         skip_cache = data.get("skipCache", False)
+        llm_base_url = data.get("llmBaseUrl")
+        llm_api_key = data.get("llmApiKey")
+        llm_model = data.get("llmModel")
 
-        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s", task_id, file_path, skip_cache)
+        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s", task_id, file_path, skip_cache, llm_model)
 
         result = translator.submit_task(
             task_id=task_id,
@@ -49,6 +52,9 @@ def create_app() -> Flask:
             dictionary_entries=dictionary_entries,
             callback_url=callback_url,
             skip_cache=skip_cache,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            llm_model=llm_model,
         )
         return jsonify(result), 202
 

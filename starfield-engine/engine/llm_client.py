@@ -23,17 +23,17 @@ RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
 _TAG_PATTERN = re.compile(r"<[^>]+>")
 
 
-def _get_client() -> OpenAI:
-    """创建 OpenAI 客户端，从环境变量读取配置。"""
+def _get_client(base_url: str | None = None, api_key: str | None = None) -> OpenAI:
+    """创建 OpenAI 客户端，优先使用传入参数，fallback 到环境变量。"""
     return OpenAI(
-        api_key=os.environ.get("LLM_API_KEY", ""),
-        base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        api_key=api_key or os.environ.get("LLM_API_KEY", ""),
+        base_url=base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
     )
 
 
-def _get_model() -> str:
-    """获取 LLM 模型名称，默认 deepseek-reasoner。"""
-    return os.environ.get("LLM_MODEL", "deepseek-reasoner")
+def _get_model(model: str | None = None) -> str:
+    """获取 LLM 模型名称，优先使用传入参数，fallback 到环境变量。"""
+    return model or os.environ.get("LLM_MODEL", "deepseek-reasoner")
 
 
 def _mask_tags(text: str) -> tuple[str, list[str]]:
@@ -235,6 +235,9 @@ def translate_records(
     max_batch_records: int = 100,
     on_batch_done: Callable[[int], None] | None = None,
     on_batch_translated: Callable[[dict[str, str], list[StringRecord]], None] | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, str]:
     """批量翻译 StringRecord 列表。
 
@@ -268,8 +271,8 @@ def translate_records(
         len(records), len(batches), target_lang, max_batch_chars, max_batch_records,
     )
 
-    client = _get_client()
-    model = _get_model()
+    client = _get_client(llm_base_url, llm_api_key)
+    model = _get_model(llm_model)
     all_translations: dict[str, str] = {}
 
     for batch_num, batch in enumerate(batches, 1):

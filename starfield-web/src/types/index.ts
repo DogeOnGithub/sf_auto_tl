@@ -14,6 +14,8 @@ export interface TaskResponse {
   progress: { translated: number; total: number }
   creation: TaskCreationInfo | null
   prompt: { id: number; name: string } | null
+  llm: { baseUrl: string; model: string } | null
+  errorMessage: string | null
   createdAt: string
   updatedAt: string
 }

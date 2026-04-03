@@ -107,6 +107,11 @@ async function handleExpire() {
       <el-tag size="small" type="info">v{{ task.creation.version }}</el-tag>
     </div>
 
+    <div v-if="task.llm" class="task-llm">
+      <el-tag size="small" type="warning">{{ task.llm.model }}</el-tag>
+      <span class="llm-url">{{ task.llm.baseUrl }}</span>
+    </div>
+
     <div v-if="showProgress" class="task-progress">
       <el-progress
         :percentage="progressPercent"
@@ -135,7 +140,7 @@ async function handleExpire() {
 
     <div v-if="task.status === 'failed'" class="task-error">
       <el-alert type="error" :closable="false" show-icon>
-        翻译失败
+        {{ task.errorMessage || '翻译失败' }}
       </el-alert>
     </div>
 
@@ -204,5 +209,20 @@ async function handleExpire() {
 
 .creation-translated {
   color: var(--el-text-color-secondary);
+}
+
+.task-llm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.llm-url {
+  color: var(--el-text-color-placeholder);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

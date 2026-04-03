@@ -33,6 +33,9 @@ public class FileController {
      * @param newPromptName     现场编写的 Prompt 名称（可选）
      * @param newPromptContent  现场编写的 Prompt 内容（可选）
      * @param confirmationMode  翻译确认模式（direct 或 confirmation，可选，默认 direct）
+     * @param llmBaseUrl        自定义 LLM API 地址（可选）
+     * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
+     * @param llmModel          自定义 LLM 模型名称（可选）
      * @return 任务 ID 和文件名
      * @throws IOException 文件处理异常
      */
@@ -43,9 +46,12 @@ public class FileController {
             @RequestParam(value = "promptId", required = false) Long promptId,
             @RequestParam(value = "newPromptName", required = false) String newPromptName,
             @RequestParam(value = "newPromptContent", required = false) String newPromptContent,
-            @RequestParam(value = "confirmationMode", required = false) String confirmationMode) throws IOException {
-        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode);
-        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode);
+            @RequestParam(value = "confirmationMode", required = false) String confirmationMode,
+            @RequestParam(value = "llmBaseUrl", required = false) String llmBaseUrl,
+            @RequestParam(value = "llmApiKey", required = false) String llmApiKey,
+            @RequestParam(value = "llmModel", required = false) String llmModel) throws IOException {
+        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {} llmModel {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode, llmModel);
+        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode, llmBaseUrl, llmApiKey, llmModel);
         return ResponseEntity.ok(response);
     }
 }

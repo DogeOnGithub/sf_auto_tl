@@ -44,7 +44,10 @@ public interface EngineClient {
             String customPrompt,
             List<DictionaryEntryDto> dictionaryEntries,
             String callbackUrl,
-            Boolean skipCache
+            Boolean skipCache,
+            String llmBaseUrl,
+            String llmApiKey,
+            String llmModel
     ) {}
 
     record DictionaryEntryDto(

@@ -54,14 +54,18 @@ public class FileUploadService {
      * @param newPromptName     现场编写的 Prompt 名称（可选）
      * @param newPromptContent  现场编写的 Prompt 内容（可选）
      * @param confirmationMode  翻译确认模式（direct 或 confirmation，可选，默认 direct）
+     * @param llmBaseUrl        自定义 LLM API 地址（可选）
+     * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
+     * @param llmModel          自定义 LLM 模型名称（可选）
      * @return 上传响应（taskId + fileName）
      * @throws IOException 文件存储异常
      */
     public FileUploadResponse upload(MultipartFile file, Long creationVersionId,
                                      Long promptId, String newPromptName,
-                                     String newPromptContent, String confirmationMode) throws IOException {
+                                     String newPromptContent, String confirmationMode,
+                                     String llmBaseUrl, String llmApiKey, String llmModel) throws IOException {
         var fileName = file.getOriginalFilename();
-        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {}", fileName, creationVersionId, confirmationMode);
+        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {} llmModel {}", fileName, creationVersionId, confirmationMode, llmModel);
 
         validateEsmFormat(file);
 
@@ -76,10 +80,12 @@ public class FileUploadService {
         task.setCreationVersionId(creationVersionId);
         task.setPromptId(resolvedPrompt.id());
         task.setConfirmationMode(resolvedMode);
+        task.setLlmBaseUrl(llmBaseUrl);
+        task.setLlmModel(llmModel);
         translationTaskRepository.insert(task);
-        log.info("[upload] 任务创建成功 taskId {} promptId {} confirmationMode {}", taskId, resolvedPrompt.id(), resolvedMode);
+        log.info("[upload] 任务创建成功 taskId {} promptId {} confirmationMode {} llmModel {}", taskId, resolvedPrompt.id(), resolvedMode, llmModel);
 
-        submitToEngine(task, resolvedPrompt.content());
+        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel);
 
         return new FileUploadResponse(taskId, fileName);
     }
@@ -183,12 +189,16 @@ public class FileUploadService {
     }
 
     /**
-     * 向翻译引擎提交翻译任务，传递 customPrompt 和 dictionaryEntries
+     * 向翻译引擎提交翻译任务，传递 customPrompt、dictionaryEntries 和自定义 LLM 配置
      *
      * @param task         翻译任务
      * @param customPrompt 解析后的 Prompt 内容
+     * @param llmBaseUrl   自定义 LLM API 地址（可选）
+     * @param llmApiKey    自定义 LLM API Key（可选）
+     * @param llmModel     自定义 LLM 模型名称（可选）
      */
-    void submitToEngine(TranslationTask task, String customPrompt) {
+    void submitToEngine(TranslationTask task, String customPrompt,
+                        String llmBaseUrl, String llmApiKey, String llmModel) {
         try {
             var dictionaryEntries = dictionaryEntryRepository.selectList(null).stream()
                     .map(entry -> new EngineClient.DictionaryEntryDto(
@@ -207,7 +217,10 @@ public class FileUploadService {
                     customPrompt,
                     dictionaryEntries,
                     callbackUrl,
-                    skipCache
+                    skipCache,
+                    llmBaseUrl,
+                    llmApiKey,
+                    llmModel
             );
 
             engineClient.submitTranslation(request);

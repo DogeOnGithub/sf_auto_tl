@@ -106,6 +106,9 @@ class Translator:
         dictionary_entries: Optional[List[Dict]] = None,
         callback_url: str | None = None,
         skip_cache: bool = False,
+        llm_base_url: str | None = None,
+        llm_api_key: str | None = None,
+        llm_model: str | None = None,
     ) -> Dict[str, str]:
         """提交翻译任务并异步执行。
 
@@ -117,18 +120,21 @@ class Translator:
             dictionary_entries: 词典词条列表。
             callback_url: 进度回调地址。
             skip_cache: 是否跳过缓存保存（confirmation 模式下为 True）。
+            llm_base_url: 自定义 LLM API 地址。
+            llm_api_key: 自定义 LLM API Key。
+            llm_model: 自定义 LLM 模型名称。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s", task_id, file_path, skip_cache)
+        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s", task_id, file_path, skip_cache, llm_model)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache),
+            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model),
             daemon=True,
         )
         thread.start()
@@ -144,6 +150,9 @@ class Translator:
         dictionary_entries: Optional[List[Dict]],
         callback_url: str | None = None,
         skip_cache: bool = False,
+        llm_base_url: str | None = None,
+        llm_api_key: str | None = None,
+        llm_model: str | None = None,
     ) -> None:
         """执行翻译任务的完整流程：解析 → 缓存查询 → 翻译 → 缓存保存 → 重组。"""
         try:
@@ -261,6 +270,9 @@ class Translator:
                     dictionary_entries=dictionary_entries,
                     on_batch_done=on_batch_done,
                     on_batch_translated=on_batch_translated,
+                    llm_base_url=llm_base_url,
+                    llm_api_key=llm_api_key,
+                    llm_model=llm_model,
                 )
 
                 # 将去重后的翻译结果展开回所有 record_id
