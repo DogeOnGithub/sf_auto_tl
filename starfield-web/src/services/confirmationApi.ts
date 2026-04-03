@@ -58,3 +58,18 @@ export function batchReplace(
     })
     .then((res) => res.data)
 }
+
+/** 获取全部确认记录（循环分页），用于导出 Excel */
+export async function fetchAllConfirmations(taskId: string): Promise<ConfirmationRecord[]> {
+  var all: ConfirmationRecord[] = []
+  var page = 1
+  var size = 500
+  var hasMore = true
+  while (hasMore) {
+    var res = await listConfirmations(taskId, page, size)
+    all.push(...res.records)
+    hasMore = page < res.pages
+    page++
+  }
+  return all
+}

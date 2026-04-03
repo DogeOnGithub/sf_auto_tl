@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Delete } from '@element-plus/icons-vue'
 import { downloadFile, expireTask } from '@/services/taskApi'
+import { fetchAllConfirmations } from '@/services/confirmationApi'
 import { useStarborn } from '@/composables/useStarborn'
 import type { TaskResponse } from '@/types'
+import * as XLSX from 'xlsx'
 
 const props = defineProps<{
   task: TaskResponse
@@ -16,6 +18,33 @@ const emit = defineEmits<{
 }>()
 
 const { isStarborn } = useStarborn()
+
+const exporting = ref(false)
+
+/** 导出中英文对照 Excel */
+async function handleExportExcel() {
+  exporting.value = true
+  try {
+    var records = await fetchAllConfirmations(props.task.taskId)
+    var rows = records.map(r => ({
+      'Form ID': r.recordId.split(':')[1] || '',
+      '类型': `${r.recordType} → ${r.recordId.split(':')[2] || ''}`,
+      'Editor ID': r.editorId || '',
+      '原文': r.sourceText,
+      '译文': r.targetText,
+      '状态': r.status === 'confirmed' ? '已确认' : '待确认',
+    }))
+    var ws = XLSX.utils.json_to_sheet(rows)
+    var wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '翻译对照')
+    var baseName = props.task.fileName?.replace(/\.[^.]+$/, '') || props.task.taskId
+    XLSX.writeFile(wb, `${baseName}_翻译对照.xlsx`)
+  } catch {
+    ElMessage.error('导出失败，请重试')
+  } finally {
+    exporting.value = false
+  }
+}
 
 /** 格式化时间为 yyyy-MM-dd HH:mm:ss */
 function formatTime(dateStr: string): string {
@@ -123,6 +152,9 @@ async function handleExpire() {
     <div v-if="task.status === 'pending_confirmation'" class="task-actions">
       <el-button type="warning" size="small" @click="emit('open-confirmation', task.taskId, task.fileName)">
         进入翻译确认
+      </el-button>
+      <el-button type="primary" size="small" :icon="Download" :loading="exporting" @click="handleExportExcel()">
+        导出对照表
       </el-button>
       <el-button type="danger" size="small" :icon="Delete" @click="handleExpire()">
         放弃
