@@ -4,8 +4,9 @@
 
 修复策略：
 - 只处理指定 Worldspace 的 Persistent Cell
-- 保留真正需要持久化的记录（非 REFR 类型，或有 Initially Disabled 等特殊标志的）
-- 将普通 REFR 从 Persistent Children 移到 Temporary Children
+- 通过扫描 REFR 内部子记录精确判断是否需要持久化
+- 保留功能性 REFR（有脚本、Enable Parent、Linked Ref、EDID 等）
+- 将纯装饰物 REFR 从 Persistent Children 移到 Temporary Children
 
 用法: python -m tools.fix_persistent <input_esm> <output_esm>
 """
@@ -31,16 +32,31 @@ TARGET_CELLS = {
 }
 
 
-def _get_refr_base(data: bytes, flags: int) -> int:
-    """提取 REFR 的 NAME (base FormID)。"""
-    rec_data = data
-    if flags & COMPRESSED_FLAG:
-        if len(rec_data) < 4:
-            return 0
-        try:
-            rec_data = zlib.decompress(rec_data[4:], bufsize=struct.unpack_from("<I", rec_data, 0)[0])
-        except zlib.error:
-            return 0
+def _decompress_record(data: bytes, flags: int) -> bytes:
+    """解压缩记录数据（如果有压缩标志）。"""
+    if not (flags & COMPRESSED_FLAG):
+        return data
+    if len(data) < 4:
+        return b""
+    try:
+        return zlib.decompress(data[4:], bufsize=struct.unpack_from("<I", data, 0)[0])
+    except zlib.error:
+        return b""
+
+
+def _scan_subrecord_types(data: bytes, flags: int) -> dict:
+    """扫描 REFR 记录的所有子记录，返回子记录类型集合和 NAME 值。
+
+    返回 dict:
+      - "types": set of subrecord type bytes (如 {b"NAME", b"VMAD", b"XESP", ...})
+      - "name_fid": NAME 子记录的 FormID 值（base object 引用）
+      - "edid": EDID 子记录的文本值
+    """
+    rec_data = _decompress_record(data, flags)
+    if not rec_data:
+        return {"types": set(), "name_fid": 0, "edid": ""}
+
+    result = {"types": set(), "name_fid": 0, "edid": ""}
     offset = 0
     xxxx_size = None
     while offset + SUBRECORD_HEADER_SIZE <= len(rec_data):
@@ -57,35 +73,83 @@ def _get_refr_base(data: bytes, flags: int) -> int:
             xxxx_size = None
         if offset + sub_size > len(rec_data):
             break
+        result["types"].add(sub_type)
         if sub_type == b"NAME" and sub_size >= 4:
-            return struct.unpack_from("<I", rec_data, offset)[0]
+            result["name_fid"] = struct.unpack_from("<I", rec_data, offset)[0]
+        elif sub_type == b"EDID" and sub_size > 0:
+            result["edid"] = rec_data[offset:offset + sub_size].rstrip(b"\x00").decode(
+                "utf-8", errors="replace"
+            )
         offset += sub_size
-    return 0
+    return result
+
+
+# 功能性子记录类型 — 包含这些子记录的 REFR 需要保留在 Persistent 中
+# 分为两类：
+# 1. 逻辑功能性：脚本、enable 链、链接引用等
+# 2. 渲染功能性：预合并引用组、图层、LOD 等
+FUNCTIONAL_SUBRECORDS = {
+    # 逻辑功能性
+    b"VMAD",  # 脚本数据（Papyrus Virtual Machine Adapter）
+    b"XESP",  # Enable State Parent（启用/禁用父物品关联）
+    b"XLKR",  # Linked Reference（链接引用，用于巡逻路径等）
+    b"XPRD",  # Patrol Data（巡逻数据）
+    b"XACT",  # Action Flag（动作标志）
+    b"XNDP",  # Navigation Door Portal（导航门传送）
+    b"XTEL",  # Teleport Destination（传送目的地）
+    b"XTNM",  # Teleport Name（传送名称）
+    b"XMBR",  # MultiBound Reference（多边界引用）
+    b"XPPA",  # Patrol Point Arrival（巡逻点到达）
+    b"XRGD",  # Ragdoll Data（布娃娃数据）
+    b"XRDO",  # Radio Data（广播数据）
+    # 渲染功能性
+    b"XRFG",  # Reference Group（预合并渲染组关联）
+    b"XLYR",  # Layer（图层归属）
+    b"XLMS",  # LOD/材质系统相关
+    b"XGDS",  # 几何数据系统相关
+}
 
 
 def _should_keep_persistent(rec_type: bytes, form_id: int, flags: int,
-                            rec_data: bytes) -> bool:
+                            rec_data: bytes) -> tuple[bool, str]:
     """判断一条记录是否应该保留在 Persistent GRUP 中。
 
+    返回 (should_keep, reason) 元组。
+
     保留条件（任一满足即保留）：
-    - 不是 REFR 类型（ACHR、PGRE 等其他引用类型需要保留）
-    - 有 Initially Disabled 标志（通常是脚本控制的物品）
-    - Base FormID 是 MOD 自身定义的（01xxxxxx，不是原版游戏的）
+    1. 不是 REFR 类型（ACHR、PGRE 等其他引用类型需要保留）
+    2. 有 Initially Disabled 标志（脚本控制的物品）
+    3. Base FormID 是 MOD 自身定义的（01xxxxxx）
+    4. 有 EDID（Editor ID，MOD 作者有意命名的关键物品）
+    5. 有功能性子记录（VMAD/XESP/XLKR 等）
     """
     # 非 REFR 记录保留
     if rec_type != b"REFR":
-        return True
+        return True, "非REFR"
 
     # Initially Disabled 的保留
     if flags & INITIALLY_DISABLED_FLAG:
-        return True
+        return True, "InitiallyDisabled"
 
-    # MOD 自身定义的 base object 保留（FormID 以 01 开头）
-    base_fid = _get_refr_base(rec_data, flags)
+    # 扫描子记录
+    sub_info = _scan_subrecord_types(rec_data, flags)
+
+    # MOD 自身定义的 base object 保留
+    base_fid = sub_info["name_fid"]
     if base_fid and (base_fid >> 24) == 0x01:
-        return True
+        return True, "MOD自定义Base"
 
-    return False
+    # 有 EDID 的保留（MOD 作者有意命名的关键物品）
+    if sub_info["edid"]:
+        return True, f"有EDID({sub_info['edid']})"
+
+    # 有功能性子记录的保留
+    found = sub_info["types"] & FUNCTIONAL_SUBRECORDS
+    if found:
+        names = "/".join(s.decode("ascii") for s in sorted(found))
+        return True, f"功能性子记录({names})"
+
+    return False, "纯装饰物"
 
 
 def _rewrite_with_fix(data: bytes, offset: int, end: int, context: dict,
@@ -291,10 +355,12 @@ def _split_persistent_records(data: bytes, offset: int, end: int,
         rec_data = data[rs:re]
         record_bytes = data[offset:re]
 
-        if _should_keep_persistent(rt, fid, fl, rec_data):
+        should_keep, reason = _should_keep_persistent(rt, fid, fl, rec_data)
+        if should_keep:
             keep.append(record_bytes)
-            cell_name = TARGET_CELLS.get(cell_fid, "unknown")
             stats["kept"] = stats.get("kept", 0) + 1
+            stats.setdefault("kept_reasons", {})
+            stats["kept_reasons"][reason] = stats["kept_reasons"].get(reason, 0) + 1
         else:
             move.append(record_bytes)
             cell_name = TARGET_CELLS.get(cell_fid, "unknown")
@@ -363,6 +429,11 @@ def main():
         print("  各 Cell 移动数量:")
         for name, count in sorted(stats["moved_per_cell"].items()):
             print(f"    {name}: {count} 条")
+
+    if stats.get("kept_reasons"):
+        print("\n  保留原因统计:")
+        for reason, count in sorted(stats["kept_reasons"].items(), key=lambda x: -x[1]):
+            print(f"    {reason}: {count} 条")
 
     input_size = Path(input_path).stat().st_size
     output_size = Path(output_path).stat().st_size

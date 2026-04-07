@@ -2,7 +2,42 @@
 
 ## 背景
 
-Starfield MOD 的 ESM 文件中，如果 MOD 作者在 Creation Kit 中将大量 REFR（物品引用）错误地放置在 Worldspace 的 Persistent Cell Children GRUP 中（而非 Temporary Cell Children），会导致这些物品被引擎始终加载，不随距离卸载，表现为杂物（垃圾桶、盘子等）在所有场景凭空出现。
+Starfield MOD 的 ESM 文件中，如果 MOD 作者在 Creation Kit 中将大量 REFR（物品引用）错误地放置在 Worldspace 的 Persistent Cell Children GRUP 中（而非 Temporary Cell Children），可能导致引擎异常，表现为杂物（垃圾桶、盘子等）在其他 Worldspace 凭空出现。
+
+### 问题分析（forgottenfrontierspoi2.esm）
+
+该 MOD 包含 6 个 LandscapeCutWorldSpace 类型的 overlay Worldspace（POI），5 个 Worldspace 的 Persistent Cell 中所有 REFR 都在 Persistent Children 里，Temporary 为零：
+
+| POI | Persistent | Temporary |
+|-----|-----------|-----------|
+| COCOPOI08Small | 4508 | 0 |
+| COCOPOI10 | 2263 | 0 |
+| COCOPOI12 | 1366 | 0 |
+| COCOPOI9 | 282 | 0 |
+| COCOPOI11 | 199 | 0 |
+
+总计 8618 条 Persistent REFR，其中 8568 条引用原版 base object，50 条引用 MOD 自定义 base object。
+
+MOD 本身没有修改任何原版 Worldspace，也没有在原版 Worldspace 中放置 REFR。但过多的 Persistent REFR 可能触发引擎异常，导致杂物在主世界（如亚特兰蒂斯太空港）凭空出现。
+
+### 修复策略
+
+通过扫描 REFR 内部子记录，精确区分功能性 REFR 和纯装饰物：
+
+**保留在 Persistent 的 REFR**（满足任一条件）：
+- 非 REFR 类型（ACHR 等角色引用）
+- 有 Initially Disabled 标志
+- Base FormID 是 MOD 自定义的（01 开头）
+- 有 EDID（Editor ID，MOD 作者有意命名的关键物品）
+- 有逻辑功能性子记录：VMAD（脚本）、XESP（Enable Parent）、XLKR（Linked Ref）、XTEL（传送）等
+- 有渲染功能性子记录：XRFG（预合并渲染组）、XLYR（图层）、XLMS、XGDS 等
+
+**移到 Temporary 的 REFR**：
+- 只有基础子记录（NAME + DATA）的纯装饰物，无任何渲染系统或逻辑功能关联
+
+修复后效果（forgottenfrontierspoi2.esm）：
+- 保留 Persistent: 5246 条
+- 移到 Temporary: 3377 条
 
 ## ESM 文件结构要点
 
@@ -89,12 +124,9 @@ python -m tools.count_cells <esm_file>
 python -m tools.fix_persistent <input_esm> <output_esm>
 ```
 
-保留条件（满足任一则不移动）：
-- 非 REFR 类型（ACHR 等角色引用）
-- 有 Initially Disabled 标志（脚本控制的物品）
-- Base FormID 以 01 开头（MOD 自身定义的物品）
+通过扫描子记录精确判断保留/移动，详见上方"修复策略"。
 
-注意：当前 `fix_persistent.py` 中的 `TARGET_CELLS` 是针对 forgottenfrontierspoi2.esm 硬编码的。修复其他 MOD 时需要先用 `analyze_persistent.py` 找出异常 Cell，再修改 `TARGET_CELLS`。
+注意：`TARGET_CELLS` 是针对 forgottenfrontierspoi2.esm 硬编码的。修复其他 MOD 时需要先用 `analyze_persistent.py` 找出异常 Cell，再修改 `TARGET_CELLS`。
 
 ### 8. list_kept_persistent.py — 查看保留的 Persistent 记录
 
@@ -113,6 +145,22 @@ python -m tools.remove_refr <input_esm> <output_esm> <base_formid1> [base_formid
 python -m tools.remove_refr <input_esm> <output_esm> --file <formid_list_file>
 ```
 
+### 10. analyze_base_objects.py — 分析 Base Object 分布
+
+分析 Persistent Cell 中 REFR 引用的 Base Object 分布，按数量排序，显示子记录类型。
+
+```bash
+python -m tools.analyze_base_objects <esm_file>
+```
+
+### 11. scan_vanilla_refs.py — 扫描原版记录引用
+
+检查 MOD 是否覆盖原版记录、是否在原版 Worldspace 中放置 REFR。
+
+```bash
+python -m tools.scan_vanilla_refs <esm_file>
+```
+
 ## 典型修复流程
 
 ```bash
@@ -121,14 +169,20 @@ cd starfield-engine
 # 1. 诊断：分析 Persistent 结构，找出异常 Cell
 python -m tools.analyze_persistent problem_mod.esm
 
-# 2. 辅助：查看 Worldspace 和 POI 名称
+# 2. 深入分析：查看 Base Object 分布和子记录特征
+python -m tools.analyze_base_objects problem_mod.esm
+
+# 3. 排查：检查是否修改了原版记录
+python -m tools.scan_vanilla_refs problem_mod.esm
+
+# 4. 辅助：查看 Worldspace 和 POI 名称
 python -m tools.list_worldspaces problem_mod.esm
 python -m tools.list_map_markers problem_mod.esm
 
-# 3. 修复：修改 fix_persistent.py 中的 TARGET_CELLS 后执行
+# 5. 修复：修改 fix_persistent.py 中的 TARGET_CELLS 后执行
 python -m tools.fix_persistent problem_mod.esm problem_mod_fixed.esm
 
-# 4. 验证：确认修复结果
+# 6. 验证：确认修复结果
 python -m tools.analyze_persistent problem_mod_fixed.esm
 python -m tools.list_kept_persistent problem_mod_fixed.esm
 ```
