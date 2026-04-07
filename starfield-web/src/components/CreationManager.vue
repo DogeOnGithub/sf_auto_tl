@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
 import type { Creation, CreationImage, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
@@ -70,6 +70,21 @@ const versionModFile = ref<File | null>(null)
 /** 预设标签列表 */
 const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园', '飞船']
 
+/** 动态标签（从数据库加载） */
+const dbTags = ref<string[]>([])
+
+/** 合并后的标签列表（预设 + 数据库去重） */
+const allTags = computed(() => {
+  var merged = [...presetTags]
+  dbTags.value.forEach(t => {
+    if (!merged.includes(t)) merged.push(t)
+  })
+  return merged
+})
+
+/** 当前选中的搜索标签 */
+const selectedTag = ref('')
+
 /** 详情抽屉图片上传状态 */
 const uploadingDetailImage = ref(false)
 
@@ -80,6 +95,26 @@ function formatTime(dateStr: string): string {
   if (isNaN(d.getTime())) return dateStr
   var pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/** 加载标签列表 */
+async function loadTags() {
+  try {
+    dbTags.value = await getCreationTags()
+  } catch { /* 忽略 */ }
+}
+
+/** 点击标签快捷搜索 */
+function handleTagClick(tag: string) {
+  if (selectedTag.value === tag) {
+    selectedTag.value = ''
+    keyword.value = ''
+  } else {
+    selectedTag.value = tag
+    keyword.value = tag
+  }
+  currentPage.value = 1
+  loadCreations()
 }
 
 /** 加载作品列表 */
@@ -97,6 +132,7 @@ async function loadCreations() {
 }
 
 function handleSearch() {
+  selectedTag.value = ''
   currentPage.value = 1
   loadCreations()
 }
@@ -197,6 +233,7 @@ async function handleSubmit() {
     ElMessage.success('创建成功')
     showUploadDialog.value = false
     loadCreations()
+    loadTags()
   } catch (e: any) {
     var msg = e?.response?.data?.message || '创建失败'
     ElMessage.error(msg)
@@ -245,6 +282,7 @@ async function handleEditSubmit() {
       selectedCreation.value = updated
     }
     loadCreations()
+    loadTags()
   } catch {
     ElMessage.error('更新失败')
   } finally {
@@ -518,6 +556,7 @@ async function handleUploadFile(versionId: number, uploadFileObj: any) {
 
 onMounted(() => {
   loadCreations()
+  loadTags()
 })
 </script>
 
@@ -527,6 +566,11 @@ onMounted(() => {
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
       <el-button type="primary" :icon="Plus" @click="openUploadDialog">分享 Mod</el-button>
+    </div>
+
+    <!-- 标签快捷搜索 -->
+    <div class="tag-filter">
+      <el-tag v-for="tag in allTags" :key="tag" :type="selectedTag === tag ? '' : 'info'" :effect="selectedTag === tag ? 'dark' : 'plain'" class="filter-tag" @click="handleTagClick(tag)">{{ tag }}</el-tag>
     </div>
 
     <!-- 卡片列表 -->
@@ -610,7 +654,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="标签">
           <div class="preset-tags">
-            <el-tag v-for="tag in presetTags" :key="tag" :type="isTagSelected(form.tags, tag) ? '' : 'info'" :effect="isTagSelected(form.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(form, 'tags', tag)">{{ tag }}</el-tag>
+            <el-tag v-for="tag in allTags" :key="tag" :type="isTagSelected(form.tags, tag) ? '' : 'info'" :effect="isTagSelected(form.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(form, 'tags', tag)">{{ tag }}</el-tag>
           </div>
           <el-input v-model="form.tags" placeholder="多个标签用逗号分隔" style="margin-top: 8px" />
         </el-form-item>
@@ -644,7 +688,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="标签">
           <div class="preset-tags">
-            <el-tag v-for="tag in presetTags" :key="tag" :type="isTagSelected(editForm.tags, tag) ? '' : 'info'" :effect="isTagSelected(editForm.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(editForm, 'tags', tag)">{{ tag }}</el-tag>
+            <el-tag v-for="tag in allTags" :key="tag" :type="isTagSelected(editForm.tags, tag) ? '' : 'info'" :effect="isTagSelected(editForm.tags, tag) ? 'dark' : 'plain'" class="preset-tag" @click="togglePresetTag(editForm, 'tags', tag)">{{ tag }}</el-tag>
           </div>
           <el-input v-model="editForm.tags" placeholder="多个标签用逗号分隔" style="margin-top: 8px" />
         </el-form-item>
@@ -836,7 +880,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-tag { cursor: pointer; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .creation-card { cursor: pointer; transition: transform 0.2s; }
 .creation-card:hover { transform: translateY(-2px); }

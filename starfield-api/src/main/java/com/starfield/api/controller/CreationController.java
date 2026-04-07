@@ -49,6 +49,18 @@ public class CreationController {
     }
 
     /**
+     * 查询所有已使用的标签
+     *
+     * @return 标签列表
+     */
+    @GetMapping("/tags")
+    public ResponseEntity<List<String>> listTags() {
+        log.info("[listTags] 收到查询标签请求");
+        var tags = creationService.listTags();
+        return ResponseEntity.ok(tags);
+    }
+
+    /**
      * 分页查询作品列表
      *
      * @param page    页码

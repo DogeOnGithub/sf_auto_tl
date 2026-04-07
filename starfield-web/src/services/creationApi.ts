@@ -15,6 +15,11 @@ export function getCreations(page = 1, size = 12, keyword?: string): Promise<Cre
   }).then((res) => res.data)
 }
 
+/** 查询所有已使用的标签 */
+export function getCreationTags(): Promise<string[]> {
+  return api.get<string[]>('/api/creations/tags').then((res) => res.data)
+}
+
 /** 查询作品详情 */
 export function getCreation(id: number): Promise<Creation> {
   return api.get<Creation>(`/api/creations/${id}`).then((res) => res.data)

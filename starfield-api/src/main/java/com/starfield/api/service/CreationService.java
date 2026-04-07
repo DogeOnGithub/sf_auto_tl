@@ -39,6 +39,29 @@ public class CreationService {
     final CosService cosService;
 
     /**
+     * 查询所有已使用的标签（去重，按使用次数降序）
+     *
+     * @return 标签列表
+     */
+    public List<String> listTags() {
+        log.info("[listTags] 查询所有标签");
+        var creations = creationRepository.selectList(
+                new QueryWrapper<Creation>().isNotNull("tags").ne("tags", "")
+        );
+        return creations.stream()
+                .map(Creation::getTags)
+                .filter(Objects::nonNull)
+                .flatMap(tags -> Arrays.stream(tags.split(",")))
+                .map(String::trim)
+                .filter(t -> !t.isEmpty())
+                .collect(Collectors.groupingBy(t -> t, Collectors.counting()))
+                .entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * 创建 Mod 作品（含首个版本）
      *
      * @param request 作品请求
@@ -198,10 +221,10 @@ public class CreationService {
 
         var wrapper = new QueryWrapper<Creation>().orderByDesc("created_at");
         if (Objects.nonNull(keyword) && !keyword.isBlank()) {
-            wrapper.and(w -> w.like("name", keyword)
-                    .or().like("translated_name", keyword)
-                    .or().like("author", keyword)
-                    .or().like("tags", keyword));
+            wrapper.and(w -> w.apply("name ILIKE {0}", "%" + keyword + "%")
+                    .or().apply("translated_name ILIKE {0}", "%" + keyword + "%")
+                    .or().apply("author ILIKE {0}", "%" + keyword + "%")
+                    .or().apply("tags ILIKE {0}", "%" + keyword + "%"));
         }
 
         var pageResult = creationRepository.selectPage(new Page<>(page, size), wrapper);
