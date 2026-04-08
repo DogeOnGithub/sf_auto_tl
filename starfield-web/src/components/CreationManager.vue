@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
 import type { Creation, CreationImage, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
@@ -397,15 +397,11 @@ async function handleAddVersionSubmit() {
   addingVersion.value = true
   try {
     var fd = new FormData()
-    var data = {
-      name: selectedCreation.value.name,
-      version: versionForm.value.version,
-      fileShareLink: versionForm.value.fileShareLink || null,
-    }
-    fd.append('data', new Blob([JSON.stringify(data)], { type: 'application/json' }))
+    fd.append('version', versionForm.value.version)
+    if (versionForm.value.fileShareLink) fd.append('fileShareLink', versionForm.value.fileShareLink)
     if (versionModFile.value) fd.append('file', versionModFile.value)
 
-    await createCreation(fd)
+    await addCreationVersion(selectedCreation.value.id, fd)
     ElMessage.success('版本添加成功')
     showAddVersionDialog.value = false
     // 刷新详情

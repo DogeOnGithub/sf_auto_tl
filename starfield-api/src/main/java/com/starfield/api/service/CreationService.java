@@ -236,6 +236,26 @@ public class CreationService {
     }
 
     /**
+     * 为已有作品添加新版本
+     *
+     * @param creationId    作品 ID
+     * @param version       版本号
+     * @param fileShareLink 分享链接（可选）
+     * @param file          Mod 文件（可选）
+     * @return 作品响应
+     */
+    public CreationResponse addVersion(Long creationId, String version, String fileShareLink, MultipartFile file) {
+        log.info("[addVersion] 添加版本 creationId {} version {}", creationId, version);
+        var creation = creationRepository.selectById(creationId);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(creationId);
+        }
+        checkDuplicateVersion(creationId, version);
+        createVersion(creationId, version, fileShareLink, file);
+        return toResponse(creation, getVersionInfos(creationId), getImageInfos(creationId));
+    }
+
+    /**
      * 查询作品详情
      *
      * @param id 作品 ID

@@ -121,6 +121,26 @@ public class CreationController {
     }
 
     /**
+     * 为已有作品添加新版本
+     *
+     * @param id              作品 ID
+     * @param version         版本号
+     * @param file            Mod 文件（可选）
+     * @param fileShareLink   分享链接（可选）
+     * @return 作品响应
+     */
+    @PostMapping(value = "/{id}/versions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<CreationResponse> addVersion(
+            @PathVariable Long id,
+            @RequestParam String version,
+            @RequestPart(value = "file", required = false) MultipartFile file,
+            @RequestParam(required = false) String fileShareLink) {
+        log.info("[addVersion] 收到添加版本请求 creationId {} version {}", id, version);
+        var response = creationService.addVersion(id, version, fileShareLink, file);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * 删除指定版本
      *
      * @param versionId 版本 ID

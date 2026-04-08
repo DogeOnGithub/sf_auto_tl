@@ -25,6 +25,13 @@ export function getCreation(id: number): Promise<Creation> {
   return api.get<Creation>(`/api/creations/${id}`).then((res) => res.data)
 }
 
+/** 为已有作品添加新版本 */
+export function addCreationVersion(creationId: number, formData: FormData): Promise<Creation> {
+  return api.post<Creation>(`/api/creations/${creationId}/versions`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((res) => res.data)
+}
+
 /** 更新作品基本信息 */
 export function updateCreation(id: number, data: Record<string, unknown>): Promise<Creation> {
   return api.put<Creation>(`/api/creations/${id}`, data).then((res) => res.data)
