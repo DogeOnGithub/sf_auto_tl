@@ -354,6 +354,27 @@ public class CreationService {
     }
 
     /**
+     * 绑定已直传 COS 的 Mod 文件到指定版本（前端分片上传后调用）
+     *
+     * @param versionId 版本 ID
+     * @param cosKey    COS 对象键
+     * @param fileName  原始文件名
+     * @return 作品响应
+     */
+    public CreationResponse bindFile(Long versionId, String cosKey, String fileName) {
+        log.info("[bindFile] 绑定 COS 文件 versionId {} cosKey {} fileName {}", versionId, cosKey, fileName);
+        var version = creationVersionRepository.selectById(versionId);
+        if (Objects.isNull(version)) {
+            throw new RuntimeException("版本不存在 versionId " + versionId);
+        }
+        var cosUrl = cosService.getBaseUrl() + "/" + cosKey;
+        version.setFilePath(cosUrl);
+        version.setFileName(fileName);
+        creationVersionRepository.updateById(version);
+        return getById(version.getCreationId());
+    }
+
+    /**
      * 更新版本分享链接
      *
      * @param versionId     版本 ID

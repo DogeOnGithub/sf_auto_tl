@@ -186,6 +186,24 @@ public class CreationController {
     }
 
     /**
+     * 绑定已直传 COS 的 Mod 文件到指定版本
+     *
+     * @param versionId 版本 ID
+     * @param body      包含 cosKey 和 fileName 的请求体
+     * @return 作品响应
+     */
+    @PutMapping("/versions/{versionId}/file-bindCosKey")
+    public ResponseEntity<CreationResponse> bindFile(
+            @PathVariable Long versionId,
+            @RequestBody java.util.Map<String, String> body) {
+        var cosKey = body.get("cosKey");
+        var fileName = body.get("fileName");
+        log.info("[bindFile] 收到绑定文件请求 versionId {} cosKey {} fileName {}", versionId, cosKey, fileName);
+        var response = creationService.bindFile(versionId, cosKey, fileName);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * 查询作品关联的翻译任务
      *
      * @param id 作品 ID

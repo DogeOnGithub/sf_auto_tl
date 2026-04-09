@@ -9,18 +9,20 @@ import com.qcloud.cos.model.ObjectMetadata;
 import com.qcloud.cos.model.PutObjectRequest;
 import com.qcloud.cos.region.Region;
 import com.starfield.api.config.CosProperties;
+import com.tencent.cloud.CosStsClient;
+import com.tencent.cloud.Response;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.TreeMap;
 
 /**
  * 腾讯云 COS 对象存储服务，封装文件上传、删除等操作
@@ -128,6 +130,77 @@ public class CosService {
     public String getBaseUrl() {
         return cosProperties.baseUrl();
     }
+
+    /**
+     * 获取 bucket 名称
+     *
+     * @return bucketName
+     */
+    public String getBucketName() {
+        return cosProperties.bucketName();
+    }
+
+    /**
+     * 获取 region
+     *
+     * @return region
+     */
+    public String getRegion() {
+        return cosProperties.region();
+    }
+
+    /**
+     * 生成 COS 临时上传凭证（STS），限定指定 cosKey 前缀的上传权限
+     *
+     * @param allowPrefix 允许上传的 cosKey 前缀，如 "creations/123/files/*"
+     * @return 临时凭证信息
+     */
+    public CosCredential generateCredential(String allowPrefix) {
+        log.info("[generateCredential] 生成临时凭证 allowPrefix {}", allowPrefix);
+        try {
+            var config = new TreeMap<String, Object>();
+            config.put("secretId", cosProperties.secretId());
+            config.put("secretKey", cosProperties.secretKey());
+            config.put("durationSeconds", 1800);
+            config.put("bucket", cosProperties.bucketName());
+            config.put("region", cosProperties.region());
+            config.put("allowPrefix", allowPrefix);
+            config.put("allowActions", new String[]{
+                    "name/cos:PutObject",
+                    "name/cos:PostObject",
+                    "name/cos:InitiateMultipartUpload",
+                    "name/cos:ListMultipartUploads",
+                    "name/cos:ListParts",
+                    "name/cos:UploadPart",
+                    "name/cos:CompleteMultipartUpload",
+                    "name/cos:AbortMultipartUpload"
+            });
+
+            var response = CosStsClient.getCredential(config);
+            log.info("[generateCredential] 临时凭证生成成功");
+            return new CosCredential(
+                    response.credentials.tmpSecretId,
+                    response.credentials.tmpSecretKey,
+                    response.credentials.sessionToken,
+                    response.startTime,
+                    response.expiredTime
+            );
+        } catch (Exception e) {
+            log.error("[generateCredential] 生成临时凭证失败", e);
+            throw new RuntimeException("生成 COS 临时凭证失败", e);
+        }
+    }
+
+    /**
+     * COS 临时上传凭证
+     */
+    public record CosCredential(
+            String tmpSecretId,
+            String tmpSecretKey,
+            String sessionToken,
+            long startTime,
+            long expiredTime
+    ) {}
 
     /**
      * 删除 COS 对象

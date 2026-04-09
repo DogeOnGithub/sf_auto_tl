@@ -2,8 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, uploadFile, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
+import { uploadToCos } from '@/services/cosUpload'
 import type { Creation, CreationImage, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
 
@@ -529,20 +530,23 @@ function openExternal(url: string) {
   window.open(url)
 }
 
-/** 上传/替换 Mod 文件 */
+/** 上传/替换 Mod 文件（分片直传 COS） */
 async function handleUploadFile(versionId: number, uploadFileObj: any) {
   uploadingVersionId.value = versionId
   uploadType.value = 'file'
   uploadProgress.value = 0
   try {
-    var result = await uploadFile(versionId, uploadFileObj.raw, (percent) => { uploadProgress.value = percent })
+    var { cosKey, fileName } = await uploadToCos(uploadFileObj.raw, 'files', (percent) => { uploadProgress.value = percent })
+    var result = await bindFile(versionId, cosKey, fileName)
     ElMessage.success('文件上传成功')
     if (selectedCreation.value) {
       selectedCreation.value = result as any
     }
     loadCreations()
-  } catch {
-    ElMessage.error('文件上传失败')
+  } catch (err: any) {
+    console.error('[handleUploadFile] 上传失败', err)
+    var msg = err?.response?.data?.message || err?.message || '文件上传失败'
+    ElMessage.error(msg)
   } finally {
     uploadingVersionId.value = null
     uploadType.value = null

@@ -87,6 +87,11 @@ export function uploadFile(versionId: number, file: File, onProgress?: (percent:
   }).then((res) => res.data)
 }
 
+/** 绑定已直传 COS 的 Mod 文件到指定版本 */
+export function bindFile(versionId: number, cosKey: string, fileName: string): Promise<Creation> {
+  return api.put<Creation>(`/api/creations/versions/${versionId}/file-bindCosKey`, { cosKey, fileName }).then((res) => res.data)
+}
+
 /** 为作品添加图片 */
 export function uploadCreationImages(creationId: number, files: File[]): Promise<Creation> {
   var fd = new FormData()
