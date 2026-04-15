@@ -21,6 +21,7 @@ NON_TRANSLATABLE_OVERRIDES = frozenset({
     (b"NPC_", b"RNAM"),   # NPC 种族 FormID 引用（4 字节二进制）
     (b"NPC_", b"NNAM"),   # NPC 二进制数据（非任务目标文本）
     (b"SMQN", b"NNAM"),   # Story Manager Quest Node 二进制数据
+    (b"FURN", b"NNAM"),   # 家具二进制数据（非文本）
 })
 
 # 需要按"记录类型 + 子记录类型"组合判断的可翻译条目
@@ -35,6 +36,7 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"NPC_", b"LNAM"),   # NPC 所属组织名
     (b"REFR", b"UNAM"),   # 地图标记名
     (b"NPC_", b"ATTX"),   # 交互提示文本
+    (b"FURN", b"ATTX"),   # 家具交互提示文本（如 Drive、Sit）
     (b"MESG", b"ITXT"),   # 消息框按钮文本
     (b"PERK", b"EPF2"),   # Perk 效果描述文本
     (b"BOOK", b"CNAM"),   # 书籍正文内容
