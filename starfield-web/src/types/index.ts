@@ -82,6 +82,14 @@ export interface CreationImage {
   sortOrder: number
 }
 
+export interface CreationWarning {
+  id: number
+  content: string
+  status: 'UNRESOLVED' | 'RESOLVED'
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Creation {
   id: number
   name: string
@@ -94,6 +102,9 @@ export interface Creation {
   versions: CreationVersion[]
   images: CreationImage[]
   hasChinesePatch: boolean
+  featured: boolean
+  featuredAt: string | null
+  warnings: CreationWarning[]
   createdAt: string
   updatedAt: string
 }

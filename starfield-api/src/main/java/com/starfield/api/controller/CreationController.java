@@ -4,6 +4,7 @@ import com.starfield.api.dto.CreationPageResponse;
 import com.starfield.api.dto.CreationRequest;
 import com.starfield.api.dto.CreationResponse;
 import com.starfield.api.dto.TaskResponse;
+import com.starfield.api.dto.WarningRequest;
 import com.starfield.api.service.CreationService;
 import com.starfield.api.service.TaskService;
 import lombok.RequiredArgsConstructor;
@@ -75,6 +76,18 @@ public class CreationController {
             @RequestParam(required = false) String keyword) {
         log.info("[list] 收到查询作品列表请求 page {} size {} keyword {}", page, size, keyword);
         var response = creationService.list(page, size, keyword);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 查询推荐列表（按 featuredAt 升序）
+     *
+     * @return 推荐作品列表
+     */
+    @GetMapping("/featured")
+    public ResponseEntity<List<CreationResponse>> listFeatured() {
+        log.info("[listFeatured] 收到查询推荐列表请求");
+        var response = creationService.listFeatured();
         return ResponseEntity.ok(response);
     }
 
@@ -274,6 +287,77 @@ public class CreationController {
             @RequestBody java.util.Map<String, java.util.List<Long>> body) {
         log.info("[reorderImages] 收到图片排序请求 id {}", id);
         creationService.reorderImages(id, body.get("imageIds"));
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 推荐指定作品
+     *
+     * @param id 作品 ID
+     * @return 作品响应
+     */
+    @PutMapping("/{id}/feature")
+    public ResponseEntity<CreationResponse> feature(@PathVariable Long id) {
+        log.info("[feature] 收到推荐作品请求 id {}", id);
+        var response = creationService.feature(id);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 取消推荐指定作品
+     *
+     * @param id 作品 ID
+     * @return 作品响应
+     */
+    @DeleteMapping("/{id}/feature")
+    public ResponseEntity<CreationResponse> unfeature(@PathVariable Long id) {
+        log.info("[unfeature] 收到取消推荐作品请求 id {}", id);
+        var response = creationService.unfeature(id);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 为指定作品添加警告
+     *
+     * @param id      作品 ID
+     * @param request 警告请求
+     * @return 作品响应
+     */
+    @PostMapping("/{id}/warnings")
+    public ResponseEntity<CreationResponse> addWarning(
+            @PathVariable Long id,
+            @RequestBody WarningRequest request) {
+        log.info("[addWarning] 收到添加警告请求 creationId {}", id);
+        var response = creationService.addWarning(id, request);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 更新警告记录
+     *
+     * @param warningId 警告 ID
+     * @param request   警告请求
+     * @return 作品响应
+     */
+    @PutMapping("/warnings/{warningId}")
+    public ResponseEntity<CreationResponse> updateWarning(
+            @PathVariable Long warningId,
+            @RequestBody WarningRequest request) {
+        log.info("[updateWarning] 收到更新警告请求 warningId {}", warningId);
+        var response = creationService.updateWarning(warningId, request);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 删除警告记录
+     *
+     * @param warningId 警告 ID
+     * @return 204 No Content
+     */
+    @DeleteMapping("/warnings/{warningId}")
+    public ResponseEntity<Void> deleteWarning(@PathVariable Long warningId) {
+        log.info("[deleteWarning] 收到删除警告请求 warningId {}", warningId);
+        creationService.deleteWarning(warningId);
         return ResponseEntity.noContent().build();
     }
 

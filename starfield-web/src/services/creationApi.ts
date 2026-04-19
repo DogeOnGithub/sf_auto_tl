@@ -112,3 +112,33 @@ export function reorderCreationImages(creationId: number, imageIds: number[]): P
   return api.put(`/api/creations/${creationId}/images/reorder`, { imageIds }).then(() => {})
 }
 
+/** 推荐指定作品 */
+export function featureCreation(id: number): Promise<Creation> {
+  return api.put<Creation>(`/api/creations/${id}/feature`).then((res) => res.data)
+}
+
+/** 取消推荐指定作品 */
+export function unfeatureCreation(id: number): Promise<Creation> {
+  return api.delete<Creation>(`/api/creations/${id}/feature`).then((res) => res.data)
+}
+
+/** 查询推荐作品列表 */
+export function getFeaturedCreations(): Promise<Creation[]> {
+  return api.get<Creation[]>('/api/creations/featured').then((res) => res.data)
+}
+
+/** 为作品添加警告记录 */
+export function addWarning(creationId: number, data: { content: string; status?: string }): Promise<Creation> {
+  return api.post<Creation>(`/api/creations/${creationId}/warnings`, data).then((res) => res.data)
+}
+
+/** 更新警告记录 */
+export function updateWarning(warningId: number, data: { content?: string; status?: string }): Promise<Creation> {
+  return api.put<Creation>(`/api/creations/warnings/${warningId}`, data).then((res) => res.data)
+}
+
+/** 删除警告记录 */
+export function deleteWarning(warningId: number): Promise<void> {
+  return api.delete(`/api/creations/warnings/${warningId}`).then(() => {})
+}
+

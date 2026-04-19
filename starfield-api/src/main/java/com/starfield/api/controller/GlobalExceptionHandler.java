@@ -145,6 +145,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理警告记录不存在异常
+     */
+    @ExceptionHandler(CreationService.WarningNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleWarningNotFound(CreationService.WarningNotFoundException e) {
+        log.warn("[handleWarningNotFound] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("WARNING_NOT_FOUND", "警告记录不存在"));
+    }
+
+    /**
      * 处理版本重复异常
      */
     @ExceptionHandler(CreationService.DuplicateVersionException.class)

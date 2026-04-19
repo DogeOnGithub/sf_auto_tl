@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Link, Search, Edit, Upload, Download } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile } from '@/services/creationApi'
+import { Plus, Delete, Link, Search, Edit, Upload, Download, Star, Warning } from '@element-plus/icons-vue'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile, getFeaturedCreations, featureCreation, unfeatureCreation, addWarning, updateWarning, deleteWarning } from '@/services/creationApi'
 import { downloadFile } from '@/services/taskApi'
 import { uploadToCos } from '@/services/cosUpload'
-import type { Creation, CreationImage, TaskResponse } from '@/types'
+import type { Creation, CreationImage, CreationWarning, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
 
 const props = defineProps<{ isStarborn: boolean }>()
@@ -297,6 +297,9 @@ async function openDetail(creation: Creation) {
     var detail = await getCreation(creation.id)
     selectedCreation.value = detail
     showDrawer.value = true
+    warningsExpanded.value = false
+    showWarningForm.value = false
+    editingWarningId.value = null
     loadCreationTasks(creation.id)
   } catch {
     ElMessage.error('加载详情失败')
@@ -554,14 +557,169 @@ async function handleUploadFile(versionId: number, uploadFileObj: any) {
   }
 }
 
+/** 推荐轮播图数据 */
+const featuredCreations = ref<Creation[]>([])
+
+/** 加载推荐列表 */
+async function loadFeatured() {
+  try {
+    featuredCreations.value = await getFeaturedCreations()
+  } catch { /* 静默忽略 */ }
+}
+
+/** 推荐/取消推荐 loading */
+const featuringCreation = ref(false)
+
+/** 推荐作品 */
+async function handleFeature() {
+  if (!selectedCreation.value) return
+  featuringCreation.value = true
+  try {
+    var detail = await featureCreation(selectedCreation.value.id)
+    selectedCreation.value = detail
+    ElMessage.success('推荐成功')
+    loadFeatured()
+  } catch {
+    ElMessage.error('操作失败')
+  } finally {
+    featuringCreation.value = false
+  }
+}
+
+/** 取消推荐作品 */
+async function handleUnfeature() {
+  if (!selectedCreation.value) return
+  featuringCreation.value = true
+  try {
+    var detail = await unfeatureCreation(selectedCreation.value.id)
+    selectedCreation.value = detail
+    ElMessage.success('已取消推荐')
+    loadFeatured()
+  } catch {
+    ElMessage.error('操作失败')
+  } finally {
+    featuringCreation.value = false
+  }
+}
+
+/** 警告模块展开/折叠 */
+const warningsExpanded = ref(false)
+
+/** 展示的警告列表 */
+const displayedWarnings = computed(() => {
+  if (!selectedCreation.value?.warnings) return []
+  if (warningsExpanded.value) return selectedCreation.value.warnings
+  return selectedCreation.value.warnings.slice(0, 3)
+})
+
+/** 添加警告表单状态 */
+const showWarningForm = ref(false)
+const warningFormContent = ref('')
+const savingWarning = ref(false)
+
+/** 编辑警告状态 */
+const editingWarningId = ref<number | null>(null)
+const editWarningContent = ref('')
+const editWarningStatus = ref<'UNRESOLVED' | 'RESOLVED'>('UNRESOLVED')
+
+/** 添加警告 */
+async function handleAddWarning() {
+  if (!selectedCreation.value || !warningFormContent.value.trim()) return
+  savingWarning.value = true
+  try {
+    var detail = await addWarning(selectedCreation.value.id, { content: warningFormContent.value.trim() })
+    selectedCreation.value = detail
+    warningFormContent.value = ''
+    showWarningForm.value = false
+    ElMessage.success('警告已添加')
+    loadFeatured()
+  } catch {
+    ElMessage.error('添加警告失败')
+  } finally {
+    savingWarning.value = false
+  }
+}
+
+/** 开始编辑警告 */
+function startEditWarning(warning: CreationWarning) {
+  editingWarningId.value = warning.id
+  editWarningContent.value = warning.content
+  editWarningStatus.value = warning.status
+}
+
+/** 取消编辑警告 */
+function cancelEditWarning() {
+  editingWarningId.value = null
+  editWarningContent.value = ''
+  editWarningStatus.value = 'UNRESOLVED'
+}
+
+/** 更新警告 */
+async function handleUpdateWarning() {
+  if (!selectedCreation.value || !editingWarningId.value || !editWarningContent.value.trim()) return
+  savingWarning.value = true
+  try {
+    var detail = await updateWarning(editingWarningId.value, { content: editWarningContent.value.trim(), status: editWarningStatus.value })
+    selectedCreation.value = detail
+    cancelEditWarning()
+    ElMessage.success('警告已更新')
+    loadFeatured()
+  } catch {
+    ElMessage.error('更新警告失败')
+  } finally {
+    savingWarning.value = false
+  }
+}
+
+/** 快捷解决警告 */
+async function handleResolveWarning(warningId: number) {
+  if (!selectedCreation.value) return
+  try {
+    var detail = await updateWarning(warningId, { status: 'RESOLVED' })
+    selectedCreation.value = detail
+    ElMessage.success('已标记为解决')
+    loadFeatured()
+  } catch {
+    ElMessage.error('操作失败')
+  }
+}
+
+/** 删除警告 */
+async function handleDeleteWarning(warningId: number) {
+  if (!selectedCreation.value) return
+  try {
+    await ElMessageBox.confirm('确定删除该警告记录？', '提示', { type: 'warning' })
+    await deleteWarning(warningId)
+    var detail = await getCreation(selectedCreation.value.id)
+    selectedCreation.value = detail
+    ElMessage.success('警告已删除')
+    loadFeatured()
+  } catch { /* 取消 */ }
+}
+
 onMounted(() => {
   loadCreations()
   loadTags()
+  loadFeatured()
 })
 </script>
 
 <template>
   <div class="creation-manager">
+    <!-- 推荐轮播图 -->
+    <div v-if="featuredCreations.length > 0" class="featured-carousel">
+      <el-carousel :interval="4000" :autoplay="featuredCreations.length > 1" height="220px" indicator-position="outside">
+        <el-carousel-item v-for="item in featuredCreations" :key="item.id">
+          <div class="carousel-item" :style="{ backgroundImage: item.images && item.images.length > 0 ? `url(${item.images[0].url})` : 'none' }" @click="openDetail(item)">
+            <div class="carousel-overlay">
+              <div class="carousel-name">{{ item.name }}</div>
+              <div v-if="item.translatedName" class="carousel-translated">{{ item.translatedName }}</div>
+            </div>
+          </div>
+        </el-carousel-item>
+      </el-carousel>
+    </div>
+
     <!-- 顶部操作栏 -->
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
@@ -731,6 +889,69 @@ onMounted(() => {
           <el-empty v-else description="暂无图片" :image-size="60" />
         </div>
 
+        <!-- 警告模块 -->
+        <div v-if="selectedCreation.warnings && selectedCreation.warnings.length > 0" class="detail-section warning-section">
+          <div class="detail-header">
+            <h4><el-icon style="vertical-align: middle; margin-right: 4px;"><Warning /></el-icon>已知问题</h4>
+            <el-button v-if="props.isStarborn" text type="warning" size="small" @click="showWarningForm = true">添加警告</el-button>
+          </div>
+          <!-- 添加警告表单 -->
+          <div v-if="showWarningForm" class="warning-form">
+            <el-input v-model="warningFormContent" type="textarea" :rows="2" placeholder="输入警告内容..." />
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <el-button type="warning" size="small" :loading="savingWarning" @click="handleAddWarning">保存</el-button>
+              <el-button size="small" @click="showWarningForm = false; warningFormContent = ''">取消</el-button>
+            </div>
+          </div>
+          <!-- 警告列表 -->
+          <div v-for="w in displayedWarnings" :key="w.id" class="warning-item">
+            <template v-if="editingWarningId === w.id">
+              <div class="warning-form">
+                <el-input v-model="editWarningContent" type="textarea" :rows="2" />
+                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                  <el-select v-model="editWarningStatus" size="small" style="width: 120px;">
+                    <el-option label="未解决" value="UNRESOLVED" />
+                    <el-option label="已解决" value="RESOLVED" />
+                  </el-select>
+                  <el-button type="warning" size="small" :loading="savingWarning" @click="handleUpdateWarning">保存</el-button>
+                  <el-button size="small" @click="cancelEditWarning">取消</el-button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="warning-content">
+                <span class="warning-text" :class="{ 'warning-resolved': w.status === 'RESOLVED' }">{{ w.content }}</span>
+                <div class="warning-meta">
+                  <el-tag :type="w.status === 'UNRESOLVED' ? 'danger' : 'success'" size="small">{{ w.status === 'UNRESOLVED' ? '未解决' : '已解决' }}</el-tag>
+                  <span class="warning-time">{{ formatTime(w.createdAt) }}</span>
+                  <span v-if="props.isStarborn" class="warning-actions">
+                    <el-button v-if="w.status === 'UNRESOLVED'" text type="success" size="small" @click="handleResolveWarning(w.id)">✓ 解决</el-button>
+                    <el-button text type="primary" size="small" @click="startEditWarning(w)">编辑</el-button>
+                    <el-button text type="danger" size="small" @click="handleDeleteWarning(w.id)">删除</el-button>
+                  </span>
+                </div>
+              </div>
+            </template>
+          </div>
+          <el-button v-if="selectedCreation.warnings.length > 3" text type="primary" size="small" @click="warningsExpanded = !warningsExpanded">
+            {{ warningsExpanded ? '收起' : `展开全部 (${selectedCreation.warnings.length})` }}
+          </el-button>
+        </div>
+        <!-- 无警告时 Starborn 仍可添加 -->
+        <div v-else-if="props.isStarborn" class="detail-section warning-section">
+          <div class="detail-header">
+            <h4><el-icon style="vertical-align: middle; margin-right: 4px;"><Warning /></el-icon>已知问题</h4>
+            <el-button text type="warning" size="small" @click="showWarningForm = true">添加警告</el-button>
+          </div>
+          <div v-if="showWarningForm" class="warning-form">
+            <el-input v-model="warningFormContent" type="textarea" :rows="2" placeholder="输入警告内容..." />
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <el-button type="warning" size="small" :loading="savingWarning" @click="handleAddWarning">保存</el-button>
+              <el-button size="small" @click="showWarningForm = false; warningFormContent = ''">取消</el-button>
+            </div>
+          </div>
+        </div>
+
         <div class="detail-section">
           <div class="detail-header">
             <h4>基本信息</h4>
@@ -851,6 +1072,8 @@ onMounted(() => {
         </div>
 
         <div v-if="props.isStarborn" class="detail-actions">
+          <el-button v-if="selectedCreation.featured" type="warning" :icon="Star" :loading="featuringCreation" @click="handleUnfeature">取消推荐</el-button>
+          <el-button v-else type="success" :icon="Star" :loading="featuringCreation" @click="handleFeature">推荐</el-button>
           <el-button type="danger" :icon="Delete" @click="handleDelete(selectedCreation.id)">不再分享</el-button>
         </div>
       </template>
@@ -924,4 +1147,21 @@ onMounted(() => {
 .paste-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 4px; }
 .preset-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .preset-tag { cursor: pointer; }
+/* 推荐轮播图 */
+.featured-carousel { margin-bottom: 16px; }
+.carousel-item { width: 100%; height: 220px; background-size: cover; background-position: center; background-color: var(--el-fill-color-lighter); cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; }
+.carousel-overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 16px; background: linear-gradient(transparent, rgba(0,0,0,0.7)); color: #fff; }
+.carousel-name { font-size: 16px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+.carousel-translated { font-size: 13px; opacity: 0.9; margin-top: 2px; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+/* 警告模块 */
+.warning-section { background: #fff8f0; border: 1px solid #f0c78a; border-radius: 8px; padding: 12px 16px !important; }
+.warning-item { padding: 8px 0; border-bottom: 1px solid rgba(240,199,138,0.4); }
+.warning-item:last-child { border-bottom: none; }
+.warning-content { display: flex; flex-direction: column; gap: 4px; }
+.warning-text { font-size: 13px; color: var(--el-text-color-primary); white-space: pre-wrap; }
+.warning-resolved { text-decoration: line-through; color: var(--el-text-color-placeholder); }
+.warning-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.warning-time { font-size: 11px; color: var(--el-text-color-placeholder); }
+.warning-actions { margin-left: auto; }
+.warning-form { margin-bottom: 8px; }
 </style>

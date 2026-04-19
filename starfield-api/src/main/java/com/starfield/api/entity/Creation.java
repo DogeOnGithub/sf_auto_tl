@@ -40,6 +40,12 @@ public class Creation {
     @TableField("tags")
     private String tags;
 
+    @TableField("featured")
+    private Boolean featured = false;
+
+    @TableField("featured_at")
+    private LocalDateTime featuredAt;
+
     @TableLogic
     @TableField("deleted")
     private Boolean deleted = false;

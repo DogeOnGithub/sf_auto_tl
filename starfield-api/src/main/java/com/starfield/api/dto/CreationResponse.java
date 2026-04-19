@@ -19,7 +19,10 @@ public record CreationResponse(
         List<ImageInfo> images,
         boolean hasChinesePatch,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        boolean featured,
+        LocalDateTime featuredAt,
+        List<WarningInfo> warnings
 ) {
     public record VersionInfo(
             Long id,
@@ -36,5 +39,13 @@ public record CreationResponse(
             Long id,
             String url,
             int sortOrder
+    ) {}
+
+    public record WarningInfo(
+            Long id,
+            String content,
+            String status,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt
     ) {}
 }

@@ -5,13 +5,16 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.dto.CreationPageResponse;
 import com.starfield.api.dto.CreationRequest;
 import com.starfield.api.dto.CreationResponse;
+import com.starfield.api.dto.WarningRequest;
 import com.starfield.api.entity.Creation;
 import com.starfield.api.entity.CreationImage;
 import com.starfield.api.entity.CreationVersion;
 import com.starfield.api.repository.CreationImageRepository;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.CreationWarningRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
+import com.starfield.api.entity.CreationWarning;
 import com.starfield.api.entity.TaskStatus;
 import com.starfield.api.entity.TranslationTask;
 import lombok.Getter;
@@ -21,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -35,6 +39,7 @@ public class CreationService {
     final CreationRepository creationRepository;
     final CreationVersionRepository creationVersionRepository;
     final CreationImageRepository creationImageRepository;
+    final CreationWarningRepository creationWarningRepository;
     final TranslationTaskRepository translationTaskRepository;
     final CosService cosService;
 
@@ -549,18 +554,163 @@ public class CreationService {
     }
 
     /**
-     * 转换实体为响应 DTO
+     * 推荐指定 Creation（FIFO 淘汰，上限 5 个）
+     *
+     * @param id 作品 ID
+     * @return 作品响应
      */
+    public CreationResponse feature(Long id) {
+        log.info("[feature] 推荐作品 id {}", id);
+        var creation = creationRepository.selectById(id);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(id);
+        }
+
+        // 幂等：已推荐则直接返回
+        if (Objects.nonNull(creation.getFeatured()) && creation.getFeatured()) {
+            log.info("[feature] 作品已推荐 id {}", id);
+            return toResponse(creation, getVersionInfos(id), getImageInfos(id));
+        }
+
+        // FIFO 淘汰：推荐数达 5 个时淘汰 featuredAt 最早的
+        var featuredWrapper = new QueryWrapper<Creation>()
+                .eq("featured", true)
+                .orderByAsc("featured_at");
+        var featuredList = creationRepository.selectList(featuredWrapper);
+        if (featuredList.size() >= 5) {
+            var oldest = featuredList.get(0);
+            oldest.setFeatured(false);
+            oldest.setFeaturedAt(null);
+            creationRepository.updateById(oldest);
+            log.info("[feature] FIFO 淘汰推荐 evictedId {}", oldest.getId());
+        }
+
+        creation.setFeatured(true);
+        creation.setFeaturedAt(LocalDateTime.now());
+        creationRepository.updateById(creation);
+        return toResponse(creation, getVersionInfos(id), getImageInfos(id));
+    }
+
+    /**
+     * 取消推荐指定 Creation
+     *
+     * @param id 作品 ID
+     * @return 作品响应
+     */
+    public CreationResponse unfeature(Long id) {
+        log.info("[unfeature] 取消推荐作品 id {}", id);
+        var creation = creationRepository.selectById(id);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(id);
+        }
+        creation.setFeatured(false);
+        creation.setFeaturedAt(null);
+        creationRepository.updateById(creation);
+        return toResponse(creation, getVersionInfos(id), getImageInfos(id));
+    }
+
+    /**
+     * 查询推荐列表（按 featuredAt 升序）
+     *
+     * @return 推荐作品列表
+     */
+    public List<CreationResponse> listFeatured() {
+        log.info("[listFeatured] 查询推荐列表");
+        var wrapper = new QueryWrapper<Creation>()
+                .eq("featured", true)
+                .orderByAsc("featured_at");
+        return creationRepository.selectList(wrapper).stream()
+                .map(c -> toResponse(c, getVersionInfos(c.getId()), getImageInfos(c.getId())))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 为指定 Creation 添加警告记录
+     *
+     * @param creationId 作品 ID
+     * @param request    警告请求
+     * @return 作品响应
+     */
+    public CreationResponse addWarning(Long creationId, WarningRequest request) {
+        log.info("[addWarning] 添加警告 creationId {}", creationId);
+        var creation = creationRepository.selectById(creationId);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(creationId);
+        }
+
+        var warning = new CreationWarning();
+        warning.setCreationId(creationId);
+        warning.setContent(request.content());
+        warning.setStatus(Objects.nonNull(request.status()) ? request.status() : "UNRESOLVED");
+        creationWarningRepository.insert(warning);
+        log.info("[addWarning] 警告已创建 warningId {}", warning.getId());
+
+        return getById(creationId);
+    }
+
+    /**
+     * 更新警告记录
+     *
+     * @param warningId 警告 ID
+     * @param request   警告请求
+     * @return 作品响应
+     */
+    public CreationResponse updateWarning(Long warningId, WarningRequest request) {
+        log.info("[updateWarning] 更新警告 warningId {}", warningId);
+        var warning = creationWarningRepository.selectById(warningId);
+        if (Objects.isNull(warning)) {
+            throw new WarningNotFoundException(warningId);
+        }
+
+        if (Objects.nonNull(request.content())) {
+            warning.setContent(request.content());
+        }
+        if (Objects.nonNull(request.status())) {
+            warning.setStatus(request.status());
+        }
+        creationWarningRepository.updateById(warning);
+        log.info("[updateWarning] 警告已更新 warningId {}", warningId);
+
+        return getById(warning.getCreationId());
+    }
+
+    /**
+     * 删除警告记录
+     *
+     * @param warningId 警告 ID
+     */
+    public void deleteWarning(Long warningId) {
+        log.info("[deleteWarning] 删除警告 warningId {}", warningId);
+        var warning = creationWarningRepository.selectById(warningId);
+        if (Objects.isNull(warning)) {
+            throw new WarningNotFoundException(warningId);
+        }
+        creationWarningRepository.deleteById(warningId);
+        log.info("[deleteWarning] 警告已删除 warningId {}", warningId);
+    }
+
     /** 转换为响应 DTO */
     private CreationResponse toResponse(Creation c, List<CreationResponse.VersionInfo> versions, List<CreationResponse.ImageInfo> images) {
         var tags = Objects.nonNull(c.getTags()) && !c.getTags().isBlank()
                 ? Arrays.asList(c.getTags().split(","))
                 : List.<String>of();
         var hasChinesePatch = checkHasChinesePatch(c.getId(), versions);
+
+        // 查询警告列表（按 createdAt 降序）
+        var warningWrapper = new QueryWrapper<CreationWarning>()
+                .eq("creation_id", c.getId())
+                .orderByDesc("created_at");
+        var warnings = creationWarningRepository.selectList(warningWrapper).stream()
+                .map(w -> new CreationResponse.WarningInfo(w.getId(), w.getContent(), w.getStatus(), w.getCreatedAt(), w.getUpdatedAt()))
+                .collect(Collectors.toList());
+
         return new CreationResponse(
                 c.getId(), c.getName(), c.getTranslatedName(), c.getAuthor(),
                 c.getCcLink(), c.getNexusLink(), c.getRemark(), tags,
-                versions, images, hasChinesePatch, c.getCreatedAt(), c.getUpdatedAt()
+                versions, images, hasChinesePatch, c.getCreatedAt(), c.getUpdatedAt(),
+                Objects.nonNull(c.getFeatured()) && c.getFeatured(),
+                c.getFeaturedAt(),
+                warnings
         );
     }
 
@@ -590,6 +740,15 @@ public class CreationService {
     public static class CreationNotFoundException extends RuntimeException {
         public CreationNotFoundException(Long id) {
             super("作品不存在 id " + id);
+        }
+    }
+
+    /**
+     * 警告记录不存在异常
+     */
+    public static class WarningNotFoundException extends RuntimeException {
+        public WarningNotFoundException(Long id) {
+            super("警告记录不存在 id " + id);
         }
     }
 
