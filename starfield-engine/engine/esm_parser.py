@@ -22,7 +22,12 @@ NON_TRANSLATABLE_OVERRIDES = frozenset({
     (b"NPC_", b"NNAM"),   # NPC 二进制数据（非任务目标文本）
     (b"SMQN", b"NNAM"),   # Story Manager Quest Node 二进制数据
     (b"FURN", b"NNAM"),   # 家具二进制数据（非文本）
+    (b"RSPJ", b"RNAM"),   # 研究项目前置依赖 FormID 引用（4 字节二进制）
 })
+
+# 包含 Object Template 的记录类型
+# 这些记录中 OBTE 子记录之后的 FULL 是模板名称（引擎内部匹配用），不能翻译
+OBJECT_TEMPLATE_RECORD_TYPES = frozenset({b"WEAP", b"ARMO", b"NPC_"})
 
 # 需要按"记录类型 + 子记录类型"组合判断的可翻译条目
 # 格式: (record_type, subrecord_type)
@@ -128,6 +133,8 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
     sub_type_counts: dict[bytes, int] = {}
     # XXXX 子记录提供的超大数据大小，供下一个子记录使用
     xxxx_size: int | None = None
+    # Object Template 区域标记：遇到 OBTE 后，后续的 FULL 是模板名称不可翻译
+    in_object_template = False
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -165,15 +172,22 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
             )
             break
 
+        # 检测 Object Template 区域：OBTE 标记模板区域开始
+        if sub_type == b"OBTE" and record_type in OBJECT_TEMPLATE_RECORD_TYPES:
+            in_object_template = True
+
         # 提取 Editor ID（EDID 子记录）
         if sub_type == b"EDID" and sub_size > 0 and not editor_id:
             editor_id = _decode_text(data[offset : offset + sub_size])
 
+        # Object Template 区域内的 FULL 是模板名称，跳过翻译
         is_translatable = (
             (sub_type in TRANSLATABLE_SUBRECORD_TYPES
              and (record_type, sub_type) not in NON_TRANSLATABLE_OVERRIDES)
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
+        if in_object_template and sub_type == b"FULL":
+            is_translatable = False
 
         if is_translatable and sub_size > 0:
             text = _decode_text(data[offset : offset + sub_size])

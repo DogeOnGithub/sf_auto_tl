@@ -14,6 +14,7 @@ from engine.esm_parser import (
     COMPRESSED_FLAG,
     GRUP_HEADER_SIZE,
     NON_TRANSLATABLE_OVERRIDES,
+    OBJECT_TEMPLATE_RECORD_TYPES,
     RECORD_HEADER_SIZE,
     SUBRECORD_HEADER_SIZE,
     TRANSLATABLE_COMBINATIONS,
@@ -60,6 +61,8 @@ def _rewrite_subrecords(
     sub_type_counts: dict[bytes, int] = {}
     # XXXX 子记录提供的超大数据大小，供下一个子记录使用
     xxxx_size: int | None = None
+    # Object Template 区域标记：遇到 OBTE 后，后续的 FULL 是模板名称不可翻译
+    in_object_template = False
 
     while offset < len(data):
         if offset + SUBRECORD_HEADER_SIZE > len(data):
@@ -92,11 +95,18 @@ def _rewrite_subrecords(
 
         sub_data = data[offset + SUBRECORD_HEADER_SIZE : offset + SUBRECORD_HEADER_SIZE + sub_size]
 
+        # 检测 Object Template 区域：OBTE 标记模板区域开始
+        if sub_type == b"OBTE" and record_type in OBJECT_TEMPLATE_RECORD_TYPES:
+            in_object_template = True
+
         is_translatable = (
             (sub_type in TRANSLATABLE_SUBRECORD_TYPES
              and (record_type, sub_type) not in NON_TRANSLATABLE_OVERRIDES)
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
+        # Object Template 区域内的 FULL 是模板名称，跳过翻译
+        if in_object_template and sub_type == b"FULL":
+            is_translatable = False
         if is_translatable and sub_size > 0:
             # 与 parser 保持一致：仅对可打印文本计数和生成 record_id
             text = _decode_text(sub_data)
