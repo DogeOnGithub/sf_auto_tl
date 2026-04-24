@@ -105,8 +105,8 @@ npm run dev
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `LLM_API_KEY` | LLM API 密钥 | - |
-| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com/v1` |
-| `LLM_MODEL` | LLM 模型名称 | `deepseek-reasoner` |
+| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com` |
+| `LLM_MODEL` | LLM 模型名称 | `deepseek-v4-flash` |
 | `COS_SECRET_ID` | 腾讯云 COS SecretId | - |
 | `COS_SECRET_KEY` | 腾讯云 COS SecretKey | - |
 | `COS_REGION` | COS 存储桶地域 | `ap-guangzhou` |

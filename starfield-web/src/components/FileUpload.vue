@@ -342,9 +342,9 @@ async function handleUpload(options: UploadRequestOptions) {
       </div>
 
       <div v-if="useCustomLlm" class="llm-config">
-        <el-input v-model="llmBaseUrl" placeholder="API URL，如 https://api.deepseek.com/v1" style="margin-bottom: 8px" />
+        <el-input v-model="llmBaseUrl" placeholder="API URL，如 https://api.deepseek.com" style="margin-bottom: 8px" />
         <el-input v-model="llmApiKey" placeholder="API Key" type="password" show-password style="margin-bottom: 8px" />
-        <el-input v-model="llmModel" placeholder="模型名称，如 deepseek-reasoner" />
+        <el-input v-model="llmModel" placeholder="模型名称，如 deepseek-v4-flash" />
         <p class="llm-hint">支持 OpenAI 兼容格式的 API（DeepSeek、通义千问、Moonshot、GLM 等）</p>
       </div>
     </div>

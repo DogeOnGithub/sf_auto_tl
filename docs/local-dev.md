@@ -45,7 +45,7 @@ LOG_LEVEL=INFO LLM_API_KEY=<your-api-key> python3 -m flask --app engine.app run 
 - 端口 5001（macOS 5000 被 AirPlay 占用）
 - 环境变量 `LLM_API_KEY`（不是 `DEEPSEEK_API_KEY`）
 - `LOG_LEVEL=INFO` 开启详细日志（生产环境默认 WARNING）
-- 默认模型 deepseek-reasoner，可通过 `LLM_MODEL` 环境变量覆盖
+- 默认模型 deepseek-v4-flash，可通过 `LLM_MODEL` 环境变量覆盖
 
 ## Backend (starfield-api)
 
