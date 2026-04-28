@@ -58,6 +58,9 @@ TRANSLATABLE_COMBINATIONS = frozenset({
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
 RECORD_HEADER_SIZE = 24
 
+# TES4 记录 flags 中的本地化标志位（bit 7）
+LOCALIZED_FLAG = 0x00000080
+
 # GRUP 头部大小：type(4) + group_size(4) + label(4) + group_type(4) + stamp(4) + unknown(4)
 GRUP_HEADER_SIZE = 24
 
@@ -337,6 +340,14 @@ def parse_esm(file_path: str) -> list[StringRecord]:
         logger.warning("[parse_esm] 文件头部不是 TES4 file_path %s header %s", file_path, header_type.decode("ascii", errors="replace"))
         return []
 
+    # 检测本地化标志：开启本地化的 ESM 文本存储在外部 Strings 文件中，当前不支持
+    header_flags = struct.unpack_from("<I", data, 8)[0]
+    if header_flags & LOCALIZED_FLAG:
+        raise ValueError(
+            f"该 ESM 文件开启了本地化（Localized），文本存储在外部 Strings 文件中，暂不支持翻译。"
+            f" file_path={file_path}"
+        )
+
     # 跳过 TES4 头部记录
     header_data_size = struct.unpack_from("<I", data, 4)[0]
     first_record_offset = RECORD_HEADER_SIZE + header_data_size
@@ -374,6 +385,11 @@ def parse_esm_bytes(data: bytes) -> list[StringRecord]:
     if header_type != b"TES4":
         logger.warning("[parse_esm_bytes] 数据头部不是 TES4 header %s", header_type.decode("ascii", errors="replace"))
         return []
+
+    # 检测本地化标志
+    header_flags = struct.unpack_from("<I", data, 8)[0]
+    if header_flags & LOCALIZED_FLAG:
+        raise ValueError("该 ESM 数据开启了本地化（Localized），文本存储在外部 Strings 文件中，暂不支持翻译。")
 
     header_data_size = struct.unpack_from("<I", data, 4)[0]
     first_record_offset = RECORD_HEADER_SIZE + header_data_size
