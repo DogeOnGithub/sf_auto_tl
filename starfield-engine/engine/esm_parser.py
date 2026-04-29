@@ -53,6 +53,7 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"QUST", b"QMDP"),   # 任务标记显示参数
     (b"QUST", b"QMDT"),   # 任务标记显示标题
     (b"QUST", b"QMSU"),   # 任务摘要文本
+    (b"AMMO", b"ONAM"),   # 弹药类型短名称（武器界面显示）
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
