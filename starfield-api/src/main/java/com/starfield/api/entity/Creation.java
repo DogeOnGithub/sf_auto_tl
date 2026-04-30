@@ -46,6 +46,9 @@ public class Creation {
     @TableField("featured_at")
     private LocalDateTime featuredAt;
 
+    @TableField("banner_image_url")
+    private String bannerImageUrl;
+
     @TableLogic
     @TableField("deleted")
     private Boolean deleted = false;

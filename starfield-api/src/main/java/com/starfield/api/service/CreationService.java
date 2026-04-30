@@ -67,6 +67,28 @@ public class CreationService {
     }
 
     /**
+     * 查询所有已使用的作者名称（去重，按使用次数降序）
+     *
+     * @return 作者名称列表
+     */
+    public List<String> listAuthors() {
+        log.info("[listAuthors] 查询所有作者");
+        var creations = creationRepository.selectList(
+                new QueryWrapper<Creation>().isNotNull("author").ne("author", "")
+        );
+        return creations.stream()
+                .map(Creation::getAuthor)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(a -> !a.isEmpty())
+                .collect(Collectors.groupingBy(a -> a, Collectors.counting()))
+                .entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * 创建 Mod 作品（含首个版本）
      *
      * @param request 作品请求
@@ -88,6 +110,7 @@ public class CreationService {
         creation.setNexusLink(request.nexusLink());
         creation.setRemark(request.remark());
         creation.setTags(Objects.nonNull(request.tags()) ? String.join(",", request.tags()) : null);
+        creation.setBannerImageUrl(request.bannerImageUrl());
         creationRepository.insert(creation);
         log.info("[create] 作品已创建 id {}", creation.getId());
 
@@ -296,6 +319,7 @@ public class CreationService {
         creation.setNexusLink(request.nexusLink());
         creation.setRemark(request.remark());
         creation.setTags(Objects.nonNull(request.tags()) ? String.join(",", request.tags()) : null);
+        creation.setBannerImageUrl(request.bannerImageUrl());
 
         creationRepository.updateById(creation);
         return toResponse(creation, getVersionInfos(id), getImageInfos(id));
@@ -689,6 +713,59 @@ public class CreationService {
         log.info("[deleteWarning] 警告已删除 warningId {}", warningId);
     }
 
+    /**
+     * 上传/替换横幅图片
+     *
+     * @param id   作品 ID
+     * @param file 横幅图片文件
+     * @return 作品响应
+     */
+    public CreationResponse uploadBanner(Long id, MultipartFile file) {
+        log.info("[uploadBanner] 上传横幅图片 id {}", id);
+        var creation = creationRepository.selectById(id);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(id);
+        }
+
+        // 若已有横幅图片则先删除旧文件
+        if (Objects.nonNull(creation.getBannerImageUrl()) && !creation.getBannerImageUrl().isBlank()) {
+            deleteCosFile(creation.getBannerImageUrl());
+        }
+
+        // 上传新图片到 COS
+        var cosUrl = saveFile(file, id, "banner");
+        creation.setBannerImageUrl(cosUrl);
+        creationRepository.updateById(creation);
+        log.info("[uploadBanner] 横幅图片已上传 id {} cosUrl {}", id, cosUrl);
+
+        return toResponse(creation, getVersionInfos(id), getImageInfos(id));
+    }
+
+    /**
+     * 删除横幅图片
+     *
+     * @param id 作品 ID
+     * @return 作品响应
+     */
+    public CreationResponse deleteBanner(Long id) {
+        log.info("[deleteBanner] 删除横幅图片 id {}", id);
+        var creation = creationRepository.selectById(id);
+        if (Objects.isNull(creation)) {
+            throw new CreationNotFoundException(id);
+        }
+
+        // 若有横幅图片则删除 COS 文件
+        if (Objects.nonNull(creation.getBannerImageUrl()) && !creation.getBannerImageUrl().isBlank()) {
+            deleteCosFile(creation.getBannerImageUrl());
+        }
+
+        creation.setBannerImageUrl(null);
+        creationRepository.updateById(creation);
+        log.info("[deleteBanner] 横幅图片已删除 id {}", id);
+
+        return toResponse(creation, getVersionInfos(id), getImageInfos(id));
+    }
+
     /** 转换为响应 DTO */
     private CreationResponse toResponse(Creation c, List<CreationResponse.VersionInfo> versions, List<CreationResponse.ImageInfo> images) {
         var tags = Objects.nonNull(c.getTags()) && !c.getTags().isBlank()
@@ -710,6 +787,7 @@ public class CreationService {
                 versions, images, hasChinesePatch, c.getCreatedAt(), c.getUpdatedAt(),
                 Objects.nonNull(c.getFeatured()) && c.getFeatured(),
                 c.getFeaturedAt(),
+                c.getBannerImageUrl(),
                 warnings
         );
     }

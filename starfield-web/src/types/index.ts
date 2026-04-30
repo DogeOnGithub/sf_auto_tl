@@ -104,6 +104,7 @@ export interface Creation {
   hasChinesePatch: boolean
   featured: boolean
   featuredAt: string | null
+  bannerImageUrl: string | null
   warnings: CreationWarning[]
   createdAt: string
   updatedAt: string

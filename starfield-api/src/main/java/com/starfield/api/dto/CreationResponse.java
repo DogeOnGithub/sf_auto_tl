@@ -22,6 +22,7 @@ public record CreationResponse(
         LocalDateTime updatedAt,
         boolean featured,
         LocalDateTime featuredAt,
+        String bannerImageUrl,
         List<WarningInfo> warnings
 ) {
     public record VersionInfo(

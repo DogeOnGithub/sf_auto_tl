@@ -361,4 +361,45 @@ public class CreationController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * 上传/替换横幅图片
+     *
+     * @param id   作品 ID
+     * @param file 横幅图片文件
+     * @return 作品响应
+     */
+    @PostMapping(value = "/{id}/banner", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<CreationResponse> uploadBanner(
+            @PathVariable Long id,
+            @RequestPart("file") MultipartFile file) {
+        log.info("[uploadBanner] 收到上传横幅图片请求 id {}", id);
+        var response = creationService.uploadBanner(id, file);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 删除横幅图片
+     *
+     * @param id 作品 ID
+     * @return 作品响应
+     */
+    @DeleteMapping("/{id}/banner")
+    public ResponseEntity<CreationResponse> deleteBanner(@PathVariable Long id) {
+        log.info("[deleteBanner] 收到删除横幅图片请求 id {}", id);
+        var response = creationService.deleteBanner(id);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 查询所有已使用的作者名称
+     *
+     * @return 作者名称列表
+     */
+    @GetMapping("/authors")
+    public ResponseEntity<List<String>> listAuthors() {
+        log.info("[listAuthors] 收到查询作者列表请求");
+        var authors = creationService.listAuthors();
+        return ResponseEntity.ok(authors);
+    }
+
 }

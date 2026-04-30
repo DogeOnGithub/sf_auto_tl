@@ -142,3 +142,22 @@ export function deleteWarning(warningId: number): Promise<void> {
   return api.delete(`/api/creations/warnings/${warningId}`).then(() => {})
 }
 
+/** 查询所有已使用的作者名称 */
+export function getCreationAuthors(): Promise<string[]> {
+  return api.get<string[]>('/api/creations/authors').then((res) => res.data)
+}
+
+/** 上传/替换横幅图片 */
+export function uploadBanner(creationId: number, file: File): Promise<Creation> {
+  var fd = new FormData()
+  fd.append('file', file)
+  return api.post<Creation>(`/api/creations/${creationId}/banner`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((res) => res.data)
+}
+
+/** 删除横幅图片 */
+export function deleteBanner(creationId: number): Promise<Creation> {
+  return api.delete<Creation>(`/api/creations/${creationId}/banner`).then((res) => res.data)
+}
+

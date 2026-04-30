@@ -14,5 +14,6 @@ public record CreationRequest(
         String version,
         String fileShareLink,
         String remark,
-        List<String> tags
+        List<String> tags,
+        String bannerImageUrl
 ) {}

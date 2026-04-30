@@ -2,7 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Link, Search, Edit, Upload, Download, Star, Warning } from '@element-plus/icons-vue'
-import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile, getFeaturedCreations, featureCreation, unfeatureCreation, addWarning, updateWarning, deleteWarning } from '@/services/creationApi'
+import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile, getFeaturedCreations, featureCreation, unfeatureCreation, addWarning, updateWarning, deleteWarning, uploadBanner, deleteBanner, getCreationAuthors } from '@/services/creationApi'
+import { getCarouselImage } from '@/utils/creationUtils'
 import { downloadFile } from '@/services/taskApi'
 import { uploadToCos } from '@/services/cosUpload'
 import type { Creation, CreationImage, CreationWarning, TaskResponse } from '@/types'
@@ -86,6 +87,18 @@ const allTags = computed(() => {
 /** 当前选中的搜索标签 */
 const selectedTag = ref('')
 
+/** 当前选中的作者搜索 */
+const selectedAuthor = ref('')
+
+/** 作者列表是否展开 */
+const authorsExpanded = ref(false)
+
+/** 展示的作者列表（折叠时最多 10 个） */
+const displayedAuthors = computed(() => {
+  if (authorsExpanded.value) return authorOptions.value
+  return authorOptions.value.slice(0, 10)
+})
+
 /** 详情抽屉图片上传状态 */
 const uploadingDetailImage = ref(false)
 
@@ -105,6 +118,16 @@ async function loadTags() {
   } catch { /* 忽略 */ }
 }
 
+/** 作者名称选项列表 */
+const authorOptions = ref<string[]>([])
+
+/** 加载作者名称列表 */
+async function loadAuthors() {
+  try {
+    authorOptions.value = await getCreationAuthors()
+  } catch { /* 静默忽略，用户仍可手动输入 */ }
+}
+
 /** 点击标签快捷搜索 */
 function handleTagClick(tag: string) {
   if (selectedTag.value === tag) {
@@ -113,6 +136,21 @@ function handleTagClick(tag: string) {
   } else {
     selectedTag.value = tag
     keyword.value = tag
+  }
+  selectedAuthor.value = ''
+  currentPage.value = 1
+  loadCreations()
+}
+
+/** 点击作者快捷搜索 */
+function handleAuthorClick(author: string) {
+  if (selectedAuthor.value === author) {
+    selectedAuthor.value = ''
+    keyword.value = ''
+  } else {
+    selectedAuthor.value = author
+    keyword.value = author
+    selectedTag.value = ''
   }
   currentPage.value = 1
   loadCreations()
@@ -134,6 +172,7 @@ async function loadCreations() {
 
 function handleSearch() {
   selectedTag.value = ''
+  selectedAuthor.value = ''
   currentPage.value = 1
   loadCreations()
 }
@@ -235,6 +274,7 @@ async function handleSubmit() {
     showUploadDialog.value = false
     loadCreations()
     loadTags()
+    loadAuthors()
   } catch (e: any) {
     var msg = e?.response?.data?.message || '创建失败'
     ElMessage.error(msg)
@@ -284,6 +324,7 @@ async function handleEditSubmit() {
     }
     loadCreations()
     loadTags()
+    loadAuthors()
   } catch {
     ElMessage.error('更新失败')
   } finally {
@@ -697,9 +738,52 @@ async function handleDeleteWarning(warningId: number) {
   } catch { /* 取消 */ }
 }
 
+/** 横幅图片上传 */
+const bannerFileInput = ref<HTMLInputElement | null>(null)
+const uploadingBanner = ref(false)
+
+/** 触发横幅图片文件选择 */
+function triggerBannerUpload() {
+  bannerFileInput.value?.click()
+}
+
+/** 处理横幅图片上传/替换 */
+async function handleBannerUpload(event: Event) {
+  var input = event.target as HTMLInputElement
+  var file = input.files?.[0]
+  if (!file || !selectedCreation.value) return
+  uploadingBanner.value = true
+  try {
+    var detail = await uploadBanner(selectedCreation.value.id, file)
+    selectedCreation.value = detail
+    ElMessage.success('横幅上传成功')
+    loadCreations()
+    loadFeatured()
+  } catch {
+    ElMessage.error('横幅上传失败')
+  } finally {
+    uploadingBanner.value = false
+    input.value = ''
+  }
+}
+
+/** 删除横幅图片 */
+async function handleDeleteBanner() {
+  if (!selectedCreation.value) return
+  try {
+    await ElMessageBox.confirm('确定删除横幅图片？', '提示', { type: 'warning' })
+    var detail = await deleteBanner(selectedCreation.value.id)
+    selectedCreation.value = detail
+    ElMessage.success('横幅已删除')
+    loadCreations()
+    loadFeatured()
+  } catch { /* 取消 */ }
+}
+
 onMounted(() => {
   loadCreations()
   loadTags()
+  loadAuthors()
   loadFeatured()
 })
 </script>
@@ -710,7 +794,7 @@ onMounted(() => {
     <div v-if="featuredCreations.length > 0" class="featured-carousel">
       <el-carousel :interval="4000" :autoplay="featuredCreations.length > 1" height="220px" indicator-position="outside">
         <el-carousel-item v-for="item in featuredCreations" :key="item.id">
-          <div class="carousel-item" :style="{ backgroundImage: item.images && item.images.length > 0 ? `url(${item.images[0].url})` : 'none' }" @click="openDetail(item)">
+          <div class="carousel-item" :style="{ backgroundImage: getCarouselImage(item) ? `url(${getCarouselImage(item)})` : 'none' }" @click="openDetail(item)">
             <div class="carousel-overlay">
               <div class="carousel-name">{{ item.name }}</div>
               <div v-if="item.translatedName" class="carousel-translated">{{ item.translatedName }}</div>
@@ -729,6 +813,14 @@ onMounted(() => {
     <!-- 标签快捷搜索 -->
     <div class="tag-filter">
       <el-tag v-for="tag in allTags" :key="tag" :type="selectedTag === tag ? '' : 'info'" :effect="selectedTag === tag ? 'dark' : 'plain'" class="filter-tag" @click="handleTagClick(tag)">{{ tag }}</el-tag>
+    </div>
+
+    <!-- 作者快捷搜索 -->
+    <div v-if="authorOptions.length > 0" class="tag-filter author-filter">
+      <el-tag v-for="author in displayedAuthors" :key="author" :type="selectedAuthor === author ? '' : 'info'" :effect="selectedAuthor === author ? 'dark' : 'plain'" class="filter-tag" @click="handleAuthorClick(author)">{{ author }}</el-tag>
+      <el-button v-if="authorOptions.length > 10" text type="primary" size="small" class="expand-btn" @click="authorsExpanded = !authorsExpanded">
+        {{ authorsExpanded ? '收起' : '展开更多' }}
+      </el-button>
     </div>
 
     <!-- 卡片列表 -->
@@ -783,7 +875,9 @@ onMounted(() => {
           <el-input v-model="form.translatedName" placeholder="中文译名" />
         </el-form-item>
         <el-form-item label="作者">
-          <el-input v-model="form.author" placeholder="Mod 作者" />
+          <el-select v-model="form.author" filterable allow-create default-first-option placeholder="选择或输入作者">
+            <el-option v-for="author in authorOptions" :key="author" :label="author" :value="author" />
+          </el-select>
         </el-form-item>
         <el-form-item label="CC 链接">
           <el-input v-model="form.ccLink" placeholder="Creation Club 链接" />
@@ -836,7 +930,9 @@ onMounted(() => {
           <el-input v-model="editForm.translatedName" />
         </el-form-item>
         <el-form-item label="作者">
-          <el-input v-model="editForm.author" />
+          <el-select v-model="editForm.author" filterable allow-create default-first-option placeholder="选择或输入作者">
+            <el-option v-for="author in authorOptions" :key="author" :label="author" :value="author" />
+          </el-select>
         </el-form-item>
         <el-form-item label="CC 链接">
           <el-input v-model="editForm.ccLink" />
@@ -863,6 +959,26 @@ onMounted(() => {
     <!-- 详情抽屉 -->
     <el-drawer v-model="showDrawer" title="创作详情" size="1100px">
       <template v-if="selectedCreation">
+        <!-- 横幅图片区域（仅 Starborn 可见） -->
+        <div v-if="props.isStarborn" class="detail-section banner-section">
+          <div class="detail-header">
+            <h4>横幅图片</h4>
+            <div class="banner-actions">
+              <template v-if="selectedCreation.bannerImageUrl">
+                <el-button text type="primary" :loading="uploadingBanner" @click="triggerBannerUpload">替换横幅</el-button>
+                <el-button text type="danger" @click="handleDeleteBanner">删除横幅</el-button>
+              </template>
+              <template v-else>
+                <el-button text type="primary" :icon="Upload" :loading="uploadingBanner" @click="triggerBannerUpload">上传横幅</el-button>
+              </template>
+            </div>
+          </div>
+          <div v-if="selectedCreation.bannerImageUrl" class="banner-preview">
+            <img :src="selectedCreation.bannerImageUrl" alt="横幅图片" class="banner-image" />
+          </div>
+          <input ref="bannerFileInput" type="file" accept="image/*" style="display: none;" @change="handleBannerUpload" />
+        </div>
+
         <div class="detail-section">
           <div class="detail-header">
             <h4>图片</h4>
@@ -1106,6 +1222,8 @@ onMounted(() => {
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .filter-tag { cursor: pointer; }
+.author-filter { align-items: center; }
+.expand-btn { flex-shrink: 0; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .creation-card { cursor: pointer; transition: transform 0.2s; }
 .creation-card:hover { transform: translateY(-2px); }
@@ -1164,4 +1282,9 @@ onMounted(() => {
 .warning-time { font-size: 11px; color: var(--el-text-color-placeholder); }
 .warning-actions { margin-left: auto; }
 .warning-form { margin-bottom: 8px; }
+/* 横幅图片区域 */
+.banner-section { }
+.banner-actions { display: flex; gap: 4px; }
+.banner-preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--el-fill-color-lighter); }
+.banner-image { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>

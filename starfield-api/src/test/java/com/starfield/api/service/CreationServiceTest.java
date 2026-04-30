@@ -8,6 +8,7 @@ import com.starfield.api.entity.CreationVersion;
 import com.starfield.api.repository.CreationImageRepository;
 import com.starfield.api.repository.CreationRepository;
 import com.starfield.api.repository.CreationVersionRepository;
+import com.starfield.api.repository.CreationWarningRepository;
 import com.starfield.api.repository.TranslationTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,13 +44,16 @@ class CreationServiceTest {
     @Mock
     TranslationTaskRepository translationTaskRepository;
 
+    @Mock
+    CreationWarningRepository creationWarningRepository;
+
     @InjectMocks
     CreationService creationService;
 
     /** 创建作品时图片应上传到 COS 并存储 COS URL */
     @Test
     void create_withImages_uploadsToCosSavesCosUrl() {
-        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null);
+        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null, null);
         var image = new MockMultipartFile("images", "screenshot.png", "image/png", "fake-image".getBytes());
 
         when(creationRepository.selectOne(any(QueryWrapper.class))).thenReturn(null);
@@ -76,7 +80,7 @@ class CreationServiceTest {
     /** 创建作品时 Mod 文件应上传到 COS */
     @Test
     void create_withFile_uploadsFileToCos() {
-        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null);
+        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null, null);
         var file = new MockMultipartFile("file", "mod.zip", "application/zip", "fake-mod".getBytes());
 
         when(creationRepository.selectOne(any(QueryWrapper.class))).thenReturn(null);
@@ -162,7 +166,7 @@ class CreationServiceTest {
     /** COS key 应包含 creationId 进行隔离 */
     @Test
     void create_cosKeyContainsCreationId() {
-        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null);
+        var request = new CreationRequest("TestMod", "测试Mod", "author", null, null, "1.0", null, null, null, null);
         var image = new MockMultipartFile("images", "pic.jpg", "image/jpeg", "data".getBytes());
 
         when(creationRepository.selectOne(any(QueryWrapper.class))).thenReturn(null);
@@ -180,5 +184,116 @@ class CreationServiceTest {
         var cosKeyCaptor = ArgumentCaptor.forClass(String.class);
         verify(cosService).uploadStream(any(InputStream.class), cosKeyCaptor.capture(), anyString(), anyLong(), anyString());
         assertThat(cosKeyCaptor.getValue()).startsWith("creations/42/images/");
+    }
+
+    /** 上传横幅图片应上传到 COS 并更新 bannerImageUrl 字段 */
+    @Test
+    void uploadBanner_uploadsToCosSavesBannerUrl() {
+        var creation = new Creation();
+        creation.setId(10L);
+        creation.setName("TestMod");
+        when(creationRepository.selectById(10L)).thenReturn(creation);
+        when(creationVersionRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(creationImageRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+
+        when(cosService.uploadStream(any(InputStream.class), contains("creations/10/banner/"), eq("image/png"), anyLong(), eq("banner.png")))
+                .thenReturn("https://cos.example.com/creations/10/banner/uuid_banner.png");
+
+        var bannerFile = new MockMultipartFile("file", "banner.png", "image/png", "fake-banner".getBytes());
+        var response = creationService.uploadBanner(10L, bannerFile);
+
+        assertThat(response.bannerImageUrl()).isEqualTo("https://cos.example.com/creations/10/banner/uuid_banner.png");
+
+        var creationCaptor = ArgumentCaptor.forClass(Creation.class);
+        verify(creationRepository).updateById(creationCaptor.capture());
+        assertThat(creationCaptor.getValue().getBannerImageUrl()).isEqualTo("https://cos.example.com/creations/10/banner/uuid_banner.png");
+    }
+
+    /** 替换横幅图片时应先删除旧 COS 文件再上传新文件 */
+    @Test
+    void uploadBanner_withExistingBanner_deletesOldFile() {
+        var creation = new Creation();
+        creation.setId(10L);
+        creation.setName("TestMod");
+        creation.setBannerImageUrl("https://cos.example.com/creations/10/banner/old_banner.png");
+        when(creationRepository.selectById(10L)).thenReturn(creation);
+        when(creationVersionRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(creationImageRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(cosService.getBaseUrl()).thenReturn("https://cos.example.com");
+
+        when(cosService.uploadStream(any(InputStream.class), contains("creations/10/banner/"), eq("image/png"), anyLong(), eq("new_banner.png")))
+                .thenReturn("https://cos.example.com/creations/10/banner/uuid_new_banner.png");
+
+        var bannerFile = new MockMultipartFile("file", "new_banner.png", "image/png", "fake-banner".getBytes());
+        var response = creationService.uploadBanner(10L, bannerFile);
+
+        // 验证旧文件被删除
+        verify(cosService).deleteObject("creations/10/banner/old_banner.png");
+        // 验证新文件已上传
+        assertThat(response.bannerImageUrl()).isEqualTo("https://cos.example.com/creations/10/banner/uuid_new_banner.png");
+    }
+
+    /** 上传横幅图片时作品不存在应抛出 CreationNotFoundException */
+    @Test
+    void uploadBanner_creationNotFound_throwsException() {
+        when(creationRepository.selectById(999L)).thenReturn(null);
+
+        var bannerFile = new MockMultipartFile("file", "banner.png", "image/png", "data".getBytes());
+
+        assertThatThrownBy(() -> creationService.uploadBanner(999L, bannerFile))
+                .isInstanceOf(CreationService.CreationNotFoundException.class)
+                .hasMessageContaining("作品不存在");
+    }
+
+    /** 删除横幅图片应删除 COS 文件并将 bannerImageUrl 设为 null */
+    @Test
+    void deleteBanner_deletesCosFileAndClearsField() {
+        var creation = new Creation();
+        creation.setId(10L);
+        creation.setName("TestMod");
+        creation.setBannerImageUrl("https://cos.example.com/creations/10/banner/uuid_banner.png");
+        when(creationRepository.selectById(10L)).thenReturn(creation);
+        when(creationVersionRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(creationImageRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(cosService.getBaseUrl()).thenReturn("https://cos.example.com");
+
+        var response = creationService.deleteBanner(10L);
+
+        // 验证 COS 文件被删除
+        verify(cosService).deleteObject("creations/10/banner/uuid_banner.png");
+        // 验证 bannerImageUrl 被设为 null
+        assertThat(response.bannerImageUrl()).isNull();
+
+        var creationCaptor = ArgumentCaptor.forClass(Creation.class);
+        verify(creationRepository).updateById(creationCaptor.capture());
+        assertThat(creationCaptor.getValue().getBannerImageUrl()).isNull();
+    }
+
+    /** 删除横幅图片时无横幅应不调用 COS 删除 */
+    @Test
+    void deleteBanner_noBanner_skipsCosDeletion() {
+        var creation = new Creation();
+        creation.setId(10L);
+        creation.setName("TestMod");
+        creation.setBannerImageUrl(null);
+        when(creationRepository.selectById(10L)).thenReturn(creation);
+        when(creationVersionRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+        when(creationImageRepository.selectList(any(QueryWrapper.class))).thenReturn(List.of());
+
+        var response = creationService.deleteBanner(10L);
+
+        // 验证未调用 COS 删除
+        verify(cosService, never()).deleteObject(anyString());
+        assertThat(response.bannerImageUrl()).isNull();
+    }
+
+    /** 删除横幅图片时作品不存在应抛出 CreationNotFoundException */
+    @Test
+    void deleteBanner_creationNotFound_throwsException() {
+        when(creationRepository.selectById(999L)).thenReturn(null);
+
+        assertThatThrownBy(() -> creationService.deleteBanner(999L))
+                .isInstanceOf(CreationService.CreationNotFoundException.class)
+                .hasMessageContaining("作品不存在");
     }
 }
