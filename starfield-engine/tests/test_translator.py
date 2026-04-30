@@ -59,7 +59,8 @@ class TestTranslatorTaskLifecycle:
     @patch("engine.translator.write_esm")
     @patch("engine.translator.translate_records")
     @patch("engine.translator.parse_esm")
-    def test_completed_task_has_output_paths(self, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
+    @patch("engine.translator.extract_glossary", return_value=[])
+    def test_completed_task_has_output_paths(self, mock_extract, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
         """完成的任务应包含输出文件路径和备份路径。"""
         records = _make_records(2)
         mock_parse.return_value = records
@@ -126,7 +127,8 @@ class TestTranslatorProgress:
     @patch("engine.translator.write_esm")
     @patch("engine.translator.translate_records")
     @patch("engine.translator.parse_esm")
-    def test_progress_reflects_translation_count(self, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
+    @patch("engine.translator.extract_glossary", return_value=[])
+    def test_progress_reflects_translation_count(self, mock_extract, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
         """进度应反映已翻译记录数和总数。"""
         records = _make_records(5)
         mock_parse.return_value = records
@@ -155,7 +157,8 @@ class TestTranslatorParameterPassing:
     @patch("engine.translator.write_esm")
     @patch("engine.translator.translate_records")
     @patch("engine.translator.parse_esm")
-    def test_passes_custom_prompt_and_dictionary(self, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
+    @patch("engine.translator.extract_glossary", return_value=[])
+    def test_passes_custom_prompt_and_dictionary(self, mock_extract, mock_parse, mock_translate, mock_write, mock_qc, mock_sc):
         """应将 customPrompt 和 dictionaryEntries 传递给 translate_records。"""
         records = _make_records(1)
         mock_parse.return_value = records

@@ -63,6 +63,10 @@ class TestPostTranslate:
             dictionary_entries=entries,
             callback_url=None,
             skip_cache=False,
+            llm_base_url=None,
+            llm_api_key=None,
+            llm_model=None,
+            enable_glossary_extraction=True,
         )
 
     def test_submit_missing_task_id_returns_400(self, client):

@@ -11,22 +11,71 @@ import requests
 from engine.cache_client import query_cache, save_cache
 from engine.esm_parser import parse_esm
 from engine.esm_writer import write_esm
-from engine.llm_client import translate_records
+from engine.glossary_extractor import extract_glossary
+from engine.llm_client import _split_batches, translate_records
 
 logger = logging.getLogger(__name__)
 
 # 任务状态常量
 STATUS_WAITING = "waiting"
 STATUS_PARSING = "parsing"
+STATUS_EXTRACTING_GLOSSARY = "extracting_glossary"
 STATUS_TRANSLATING = "translating"
 STATUS_ASSEMBLING = "assembling"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 
 VALID_STATUSES = frozenset({
-    STATUS_WAITING, STATUS_PARSING, STATUS_TRANSLATING,
-    STATUS_ASSEMBLING, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_WAITING, STATUS_PARSING, STATUS_EXTRACTING_GLOSSARY,
+    STATUS_TRANSLATING, STATUS_ASSEMBLING, STATUS_COMPLETED, STATUS_FAILED,
 })
+
+
+def merge_glossary_with_dictionary(
+    glossary: list[dict],
+    user_dictionary: list[dict] | None,
+) -> list[dict]:
+    """合并自动提取术语表与用户词典，用户词典优先。
+
+    以 sourceText 为 key，先放入 glossary 条目，再用 user_dictionary 条目覆盖，
+    确保用户的翻译偏好始终被尊重。
+
+    Args:
+        glossary: 自动提取的术语表。
+        user_dictionary: 用户手动维护的词典。
+
+    Returns:
+        合并后的词典约束列表。
+    """
+    if not glossary and not user_dictionary:
+        logger.debug("[merge_glossary_with_dictionary] 术语表和用户词典均为空 返回空列表")
+        return []
+
+    if not user_dictionary:
+        logger.debug("[merge_glossary_with_dictionary] 用户词典为空 直接返回术语表 glossary_count %d", len(glossary))
+        return glossary if glossary else []
+
+    if not glossary:
+        logger.debug("[merge_glossary_with_dictionary] 术语表为空 直接返回用户词典 user_dictionary_count %d", len(user_dictionary))
+        return user_dictionary
+
+    merged: dict[str, dict] = {}
+    for entry in glossary:
+        source = entry.get("sourceText")
+        if source:
+            merged[source] = entry
+
+    for entry in user_dictionary:
+        source = entry.get("sourceText")
+        if source:
+            merged[source] = entry
+
+    result = list(merged.values())
+    logger.info(
+        "[merge_glossary_with_dictionary] 合并完成 glossary_count %d user_dictionary_count %d merged_count %d",
+        len(glossary), len(user_dictionary), len(result),
+    )
+    return result
 
 
 class Translator:
@@ -109,6 +158,7 @@ class Translator:
         llm_base_url: str | None = None,
         llm_api_key: str | None = None,
         llm_model: str | None = None,
+        enable_glossary_extraction: bool = True,
     ) -> Dict[str, str]:
         """提交翻译任务并异步执行。
 
@@ -123,18 +173,19 @@ class Translator:
             llm_base_url: 自定义 LLM API 地址。
             llm_api_key: 自定义 LLM API Key。
             llm_model: 自定义 LLM 模型名称。
+            enable_glossary_extraction: 是否启用自动术语提取 默认 True。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s", task_id, file_path, skip_cache, llm_model)
+        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s enable_glossary_extraction %s", task_id, file_path, skip_cache, llm_model, enable_glossary_extraction)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model),
+            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model, enable_glossary_extraction),
             daemon=True,
         )
         thread.start()
@@ -153,8 +204,9 @@ class Translator:
         llm_base_url: str | None = None,
         llm_api_key: str | None = None,
         llm_model: str | None = None,
+        enable_glossary_extraction: bool = True,
     ) -> None:
-        """执行翻译任务的完整流程：解析 → 缓存查询 → 翻译 → 缓存保存 → 重组。"""
+        """执行翻译任务的完整流程：解析 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
         try:
             # 1. 解析 ESM
             self._update_status(task_id, STATUS_PARSING)
@@ -223,6 +275,30 @@ class Translator:
                         })
                 if cached_items:
                     self._report_progress(task_id, callback_url, items=cached_items)
+
+            # 2.5 术语提取（如启用且需要分批翻译）
+            # 单批次翻译时 LLM 在同一次调用中看到所有文本 不需要术语提取
+            needs_multiple_batches = len(_split_batches(dedup_records, 200000, 800)) > 1
+            if enable_glossary_extraction and uncached_records and needs_multiple_batches:
+                try:
+                    self._update_status(task_id, STATUS_EXTRACTING_GLOSSARY)
+                    self._report_progress(task_id, callback_url)
+                    logger.info("[_run_task] 开始术语提取 task_id %s uncached_count %d", task_id, len(uncached_records))
+
+                    glossary = extract_glossary(
+                        records=uncached_records,
+                        target_lang=target_lang,
+                        llm_base_url=llm_base_url,
+                        llm_api_key=llm_api_key,
+                        llm_model=llm_model,
+                    )
+                    dictionary_entries = merge_glossary_with_dictionary(glossary, dictionary_entries)
+
+                    logger.info("[_run_task] 术语提取完成 task_id %s glossary_count %d merged_count %d", task_id, len(glossary), len(dictionary_entries) if dictionary_entries else 0)
+                except Exception as e:
+                    logger.warning("[_run_task] 术语提取异常 降级为无术语约束模式 task_id %s error %s", task_id, str(e))
+            elif enable_glossary_extraction and uncached_records and not needs_multiple_batches:
+                logger.info("[_run_task] 单批次翻译 跳过术语提取 task_id %s dedup_count %d", task_id, len(dedup_records))
 
             # 3. 翻译未命中词条
             self._update_status(task_id, STATUS_TRANSLATING)

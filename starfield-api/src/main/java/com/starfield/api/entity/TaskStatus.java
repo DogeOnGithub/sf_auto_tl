@@ -9,6 +9,7 @@ package com.starfield.api.entity;
 public enum TaskStatus {
     waiting,
     parsing,
+    extracting_glossary,
     translating,
     pending_confirmation,
     assembling,

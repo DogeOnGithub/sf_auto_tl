@@ -41,6 +41,7 @@ def create_app() -> Flask:
         llm_base_url = data.get("llmBaseUrl")
         llm_api_key = data.get("llmApiKey")
         llm_model = data.get("llmModel")
+        enable_glossary_extraction = data.get("enableGlossaryExtraction", True)
 
         logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s", task_id, file_path, skip_cache, llm_model)
 
@@ -55,6 +56,7 @@ def create_app() -> Flask:
             llm_base_url=llm_base_url,
             llm_api_key=llm_api_key,
             llm_model=llm_model,
+            enable_glossary_extraction=enable_glossary_extraction,
         )
         return jsonify(result), 202
 

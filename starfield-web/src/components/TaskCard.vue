@@ -60,6 +60,7 @@ const statusTagType = computed(() => {
   var map: Record<string, string> = {
     waiting: 'info',
     parsing: 'warning',
+    extracting_glossary: 'warning',
     translating: '',
     pending_confirmation: 'warning',
     assembling: 'warning',
@@ -75,6 +76,7 @@ const statusLabel = computed(() => {
   var map: Record<string, string> = {
     waiting: '等待中',
     parsing: '解析中',
+    extracting_glossary: '提取术语中',
     translating: '翻译中',
     pending_confirmation: '待确认',
     assembling: '重组中',

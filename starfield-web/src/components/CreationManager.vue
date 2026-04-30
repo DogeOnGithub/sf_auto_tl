@@ -362,7 +362,7 @@ async function loadCreationTasks(creationId: number) {
 /** 状态中文映射 */
 function statusLabel(status: string): string {
   var map: Record<string, string> = {
-    waiting: '等待中', parsing: '解析中', translating: '翻译中',
+    waiting: '等待中', parsing: '解析中', extracting_glossary: '提取术语中', translating: '翻译中',
     assembling: '重组中', completed: '已完成', failed: '失败', expired: '已过期',
   }
   return map[status] ?? status
@@ -371,7 +371,7 @@ function statusLabel(status: string): string {
 /** 状态标签类型 */
 function statusTagType(status: string): string {
   var map: Record<string, string> = {
-    waiting: 'info', parsing: 'warning', translating: '',
+    waiting: 'info', parsing: 'warning', extracting_glossary: 'warning', translating: '',
     assembling: 'warning', completed: 'success', failed: 'danger', expired: 'info',
   }
   return map[status] ?? 'info'
