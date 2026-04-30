@@ -974,7 +974,7 @@ onMounted(() => {
             </div>
           </div>
           <div v-if="selectedCreation.bannerImageUrl" class="banner-preview">
-            <img :src="selectedCreation.bannerImageUrl" alt="横幅图片" class="banner-image" />
+            <el-image :src="selectedCreation.bannerImageUrl" alt="横幅图片" class="banner-image" fit="cover" :preview-src-list="[selectedCreation.bannerImageUrl]" :preview-teleported="true" :z-index="3000" />
           </div>
           <input ref="bannerFileInput" type="file" accept="image/*" style="display: none;" @change="handleBannerUpload" />
         </div>
@@ -1285,6 +1285,6 @@ onMounted(() => {
 /* 横幅图片区域 */
 .banner-section { }
 .banner-actions { display: flex; gap: 4px; }
-.banner-preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--el-fill-color-lighter); }
-.banner-image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.banner-preview { width: 100%; max-height: 200px; border-radius: 8px; overflow: hidden; background: var(--el-fill-color-lighter); }
+.banner-image { width: 100%; max-height: 200px; display: block; cursor: pointer; }
 </style>
