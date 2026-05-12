@@ -20,6 +20,11 @@ def create_app() -> Flask:
     logging.basicConfig(level=getattr(logging, log_level, logging.WARNING))
     app = Flask(__name__)
 
+    @app.get("/health")
+    def health():
+        """健康检查端点。"""
+        return jsonify({"status": "ok"}), 200
+
     @app.post("/engine/translate")
     def submit_translate():
         """提交翻译任务。"""

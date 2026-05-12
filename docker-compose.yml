@@ -28,6 +28,13 @@ services:
       API_BASE_URL: http://starfield-api:8080
     volumes:
       - uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   starfield-api:
     build: ./starfield-api
@@ -50,6 +57,13 @@ services:
       COS_BASE_URL: ${COS_BASE_URL}
     volumes:
       - uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +74,7 @@ services:
     build: ./starfield-web
     ports:
       - "80:80"
+    restart: unless-stopped
     depends_on:
       - starfield-api
 
