@@ -53,6 +53,15 @@ def _unmask_tags(text: str, tags: list[str]) -> str:
     return result
 
 
+def _fix_br_tags(original: str, translated: str) -> str:
+    """修复 LLM 错误引入的 <br> 标签：如果原文不含 <br> 但译文含有，还原为原文的换行符。"""
+    if "<br>" not in original and "<br>" in translated:
+        # 判断原文使用的换行符类型
+        newline = "\r\n" if "\r\n" in original else "\n"
+        translated = translated.replace("<br>", newline)
+    return translated
+
+
 def _parse_response(response_text: str, records: list[StringRecord]) -> dict[str, str]:
     """解析 LLM 返回的翻译文本，按编号与原始记录 ID 匹配。
 
@@ -166,6 +175,10 @@ def _translate_batch(
             for i, record in enumerate(records):
                 if record.record_id in result and tags_map[i]:
                     result[record.record_id] = _unmask_tags(result[record.record_id], tags_map[i])
+            # 修复 LLM 错误引入的 <br> 标签
+            for record in records:
+                if record.record_id in result:
+                    result[record.record_id] = _fix_br_tags(record.text, result[record.record_id])
             return result
 
         except Exception as e:
