@@ -26,8 +26,20 @@ NON_TRANSLATABLE_OVERRIDES = frozenset({
 })
 
 # 包含 Object Template 的记录类型
-# 这些记录中 OBTE 子记录之后的 FULL 是模板名称（引擎内部匹配用），不能翻译
+# 这些记录中 OBTE 子记录之后的 FULL 可能是模板层级名（不能翻译）或自定义显示名（需要翻译）
 OBJECT_TEMPLATE_RECORD_TYPES = frozenset({b"WEAP", b"ARMO", b"NPC_"})
+
+# 引擎内部的 Object Template 层级名称，翻译会导致工作台/改装界面崩溃
+# 这些名称用于引擎匹配模板层级，必须保持英文原文
+OBJECT_TEMPLATE_LEVEL_NAMES = frozenset({
+    "Fallback", "Default", "Entry",
+    "Standard", "Standard Low", "Standard Med", "Standard High", "Standard Very High",
+    "Auto Low", "Auto Med", "Auto High",
+    "Upgraded Low", "Upgraded Med", "Upgraded High",
+    "Silenced Low", "Silenced Med", "Silenced High",
+    "Sniper Low", "Sniper Med", "Sniper High",
+    "Simple",
+})
 
 # 需要按"记录类型 + 子记录类型"组合判断的可翻译条目
 # 格式: (record_type, subrecord_type)
@@ -54,6 +66,9 @@ TRANSLATABLE_COMBINATIONS = frozenset({
     (b"QUST", b"QMDT"),   # 任务标记显示标题
     (b"QUST", b"QMSU"),   # 任务摘要文本
     (b"AMMO", b"ONAM"),   # 弹药类型短名称（武器界面显示）
+    (b"ACTI", b"ATTX"),   # 激活器交互提示文本（如 Use）
+    (b"FLOR", b"ATTX"),   # 植物采集提示文本（如 Harvest）
+    (b"BOOK", b"ENAM"),   # 书籍效果名称
 })
 
 # 记录头部大小：type(4) + data_size(4) + flags(4) + form_id(4) + revision(4) + version(2) + unknown(2)
@@ -113,12 +128,18 @@ def _is_printable_text(text: str) -> bool:
     return printable_count / len(text) >= 0.9
 
 
+
 def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[list[StringRecord], str]:
     """解析记录内的子记录，提取可翻译文本和 Editor ID。
 
     判断逻辑：
     1. 子记录类型在 TRANSLATABLE_SUBRECORD_TYPES 中（任意记录类型下都翻译）
     2. (记录类型, 子记录类型) 组合在 TRANSLATABLE_COMBINATIONS 中
+
+    Object Template 保护机制（WEAP/ARMO/NPC_）：
+    OBTE 区域内的 FULL 子记录逐条判断：
+    - 如果文本是引擎模板层级名（OBJECT_TEMPLATE_LEVEL_NAMES）→ 跳过
+    - 如果文本是自定义名称（mod 武器/装备/NPC 名）→ 提取翻译
 
     同一 form_id 下多个同类型子记录通过序号区分：
     第一个为 RECORD_TYPE:FORM_ID:SUBRECORD_TYPE，
@@ -137,7 +158,7 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
     sub_type_counts: dict[bytes, int] = {}
     # XXXX 子记录提供的超大数据大小，供下一个子记录使用
     xxxx_size: int | None = None
-    # Object Template 区域标记：遇到 OBTE 后，后续的 FULL 是模板名称不可翻译
+    # Object Template 区域标记：遇到 OBTE 后，后续的 FULL 需要判断是否为模板层级名
     in_object_template = False
 
     while offset < len(data):
@@ -184,14 +205,19 @@ def _parse_subrecords(data: bytes, record_type: bytes, form_id: int) -> tuple[li
         if sub_type == b"EDID" and sub_size > 0 and not editor_id:
             editor_id = _decode_text(data[offset : offset + sub_size])
 
-        # Object Template 区域内的 FULL 是模板名称，跳过翻译
+        # 判断是否可翻译
         is_translatable = (
             (sub_type in TRANSLATABLE_SUBRECORD_TYPES
              and (record_type, sub_type) not in NON_TRANSLATABLE_OVERRIDES)
             or (record_type, sub_type) in TRANSLATABLE_COMBINATIONS
         )
-        if in_object_template and sub_type == b"FULL":
-            is_translatable = False
+
+        # Object Template 区域内 FULL 的处理逻辑：
+        # 逐条判断文本内容，引擎模板层级名跳过，自定义名称提取翻译
+        if in_object_template and sub_type == b"FULL" and sub_size > 0:
+            text_preview = _decode_text(data[offset : offset + sub_size])
+            if text_preview in OBJECT_TEMPLATE_LEVEL_NAMES:
+                is_translatable = False
 
         if is_translatable and sub_size > 0:
             text = _decode_text(data[offset : offset + sub_size])

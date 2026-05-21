@@ -59,6 +59,9 @@ ESM 解析器使用两层匹配来判断子记录是否包含可翻译文本：
 | `QUST` | `QMDT` | 任务标记显示标题 | 任务记录 |
 | `QUST` | `QMSU` | 任务摘要文本 | 任务记录 |
 | `AMMO` | `ONAM` | 弹药类型短名称 | 弹药记录 |
+| `ACTI` | `ATTX` | 激活器交互提示文本（如 Use） | 激活器记录 |
+| `FLOR` | `ATTX` | 植物采集提示文本（如 Harvest） | 植物记录 |
+| `BOOK` | `ENAM` | 书籍效果名称 | 书籍记录 |
 
 ## 已排除的类型（不需要翻译）
 
@@ -101,8 +104,15 @@ python3 -m tools.scan_subrecords <esm_file_path>
 
 ## Object Template 保护机制
 
-WEAP、ARMO、NPC_ 等记录类型支持 Object Template 系统。这些记录中 `OBTE` 子记录标记了模板区域的开始，之后的 `FULL` 子记录是模板名称（如 `Fallback`、`Standard Low`、`Standard High` 等），引擎用这些名称匹配模板层级。
+WEAP、ARMO、NPC_ 等记录类型支持 Object Template 系统。这些记录中 `OBTE` 子记录标记了模板区域的开始，之后的 `FULL` 子记录可能是：
 
-**翻译这些模板名称会导致引擎无法匹配模板，工作台/改装界面无法正常显示。**
+1. **引擎模板层级名**（如 `Fallback`、`Default`、`Entry`、`Standard Low/Med/High` 等）— 翻译会导致工作台崩溃，必须跳过
+2. **自定义显示名**（如 mod 武器名 `Headhunter's Pistol`）— 游戏中会显示给玩家，需要翻译
 
-解析器和写入器通过 `OBJECT_TEMPLATE_RECORD_TYPES` 和 `in_object_template` 标记来保护这些名称不被提取和翻译。只有 OBTE 之前的第一个 FULL（即物品显示名称）会被翻译。
+解析器通过 `OBJECT_TEMPLATE_LEVEL_NAMES` 集合逐条判断 OBTE 区域内的 FULL 文本：
+- 文本匹配层级名集合 → 跳过
+- 文本不匹配 → 提取翻译
+
+已知的引擎模板层级名：`Fallback`、`Default`、`Entry`、`Standard`、`Standard Low/Med/High/Very High`、`Auto Low/Med/High`、`Upgraded Low/Med/High`、`Silenced Low/Med/High`、`Sniper Low/Med/High`、`Simple`。
+
+如果发现新的模板层级名导致翻译后崩溃，加到 `OBJECT_TEMPLATE_LEVEL_NAMES` 中。
