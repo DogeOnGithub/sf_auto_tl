@@ -1294,6 +1294,7 @@ onMounted(() => {
 .carousel-translated { font-size: 13px; opacity: 0.9; margin-top: 2px; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
 /* 警告模块 */
 .warning-section { background: #fff8f0; border: 1px solid #f0c78a; border-radius: 8px; padding: 12px 16px !important; }
+html.dark .warning-section { background: var(--el-color-warning-light-9); border-color: var(--el-color-warning-light-7); }
 .warning-item { padding: 8px 0; border-bottom: 1px solid rgba(240,199,138,0.4); }
 .warning-item:last-child { border-bottom: none; }
 .warning-content { display: flex; flex-direction: column; gap: 4px; }

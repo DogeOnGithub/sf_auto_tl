@@ -1,0 +1,61 @@
+/*
+ * 全局主题：黑白单色调（方案 A）
+ * - 亮色模式：主色为近黑，主色上的前景保持白色（Element 默认）
+ * - 暗色模式：主色翻转为近白，主色上的前景改为深色（本文件末尾修正）
+ * 依赖 Element Plus 的 CSS 设计变量，需在 element-plus/dist/index.css 之后引入。
+ */
+
+/* ---------- 亮色模式：主色近黑，light-N 朝白递增 ---------- */
+:root {
+  --el-color-primary: #1d1d1d;
+  --el-color-primary-light-3: #4b4b4b;
+  --el-color-primary-light-5: #767676;
+  --el-color-primary-light-7: #a3a3a3;
+  --el-color-primary-light-8: #c8c8c8;
+  --el-color-primary-light-9: #e6e6e6;
+  --el-color-primary-dark-2: #000000;
+}
+
+/* ---------- 暗色模式：主色近白，light-N 朝暗背景递减 ---------- */
+html.dark {
+  --el-color-primary: #e6e6e6;
+  --el-color-primary-light-3: #b8b8b8;
+  --el-color-primary-light-5: #8a8a8a;
+  --el-color-primary-light-7: #5c5c5c;
+  --el-color-primary-light-8: #454545;
+  --el-color-primary-light-9: #2f2f2f;
+  --el-color-primary-dark-2: #ffffff;
+}
+
+/*
+ * 暗色模式下，主色变浅后「主色底 + 白字」会看不清。
+ * 只有实心主色按钮才是「主色底」，需要把前景改为深色（用页面背景色，随主题自适应）；
+ * text / link / plain 型主色按钮静止态是「主色文字」（近白，本身可读），不能改，否则会变深色看不见。
+ */
+html.dark .el-button--primary:not(.is-text):not(.is-link):not(.is-plain) {
+  --el-button-text-color: var(--el-bg-color);
+  --el-button-hover-text-color: var(--el-bg-color);
+  --el-button-active-text-color: var(--el-bg-color);
+  --el-button-disabled-text-color: var(--el-bg-color);
+}
+
+/* plain 型主色按钮：hover 时底色填充为主色（近白），白字看不见 → hover/active 前景改深色 */
+html.dark .el-button--primary.is-plain {
+  --el-button-hover-text-color: var(--el-bg-color);
+  --el-button-active-text-color: var(--el-bg-color);
+}
+
+/* 选中态标签（type='' + effect='dark'，只有主色标签用到 dark 效果） */
+html.dark .el-tag--dark {
+  --el-tag-text-color: var(--el-bg-color);
+}
+
+/* 复选框勾选标记（选中底色为主色，勾为白色 → 改深色） */
+html.dark .el-checkbox {
+  --el-checkbox-checked-icon-color: var(--el-bg-color);
+}
+
+/* 单选框选中圆点（底为主色，点为白色 → 改深色） */
+html.dark .el-radio__input.is-checked .el-radio__inner::after {
+  background-color: var(--el-bg-color);
+}

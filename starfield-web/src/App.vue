@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled } from '@element-plus/icons-vue'
+import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled, Moon, Sunny } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
@@ -10,6 +10,7 @@ import DictionaryManager from '@/components/DictionaryManager.vue'
 import CreationManager from '@/components/CreationManager.vue'
 import CacheManager from '@/components/CacheManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
+import { useTheme } from '@/composables/useTheme'
 import type { FileUploadResponse } from '@/types'
 
 const VALID_MENUS = ['home', 'translate', 'history', 'cache', 'prompt', 'dictionary', 'creations']
@@ -23,6 +24,7 @@ function getMenuFromHash(): string {
 const taskListRef = ref<InstanceType<typeof TaskList>>()
 const activeMenu = ref(getMenuFromHash())
 const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
+const { isDark, toggleTheme } = useTheme()
 
 /** 菜单切换时同步 hash */
 function handleMenuSelect(index: string) {
@@ -118,6 +120,16 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <span>Creations</span>
         </el-menu-item>
       </el-menu>
+
+      <div class="theme-toggle">
+        <el-button text class="theme-toggle-btn" @click="toggleTheme">
+          <el-icon>
+            <Sunny v-if="isDark" />
+            <Moon v-else />
+          </el-icon>
+          <span>{{ isDark ? '亮色模式' : '暗黑模式' }}</span>
+        </el-button>
+      </div>
     </el-aside>
 
     <el-container>
@@ -170,6 +182,8 @@ function handleUploadSuccess(payload: FileUploadResponse) {
   background: var(--el-bg-color);
   border-right: 1px solid var(--el-border-color-lighter);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .logo {
@@ -193,6 +207,22 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 
 .side-menu {
   border-right: none;
+}
+
+.theme-toggle {
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.theme-toggle-btn {
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--el-text-color-regular);
+}
+
+.theme-toggle-btn .el-icon {
+  margin-right: 8px;
 }
 
 .app-main {
