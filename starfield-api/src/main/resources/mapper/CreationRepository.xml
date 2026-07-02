@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.starfield.api.repository.CreationRepository">
+
+    <!-- 按最新版本添加时间倒序分页查询作品（无版本的作品排在最后） -->
+    <select id="selectPageOrderByLatestVersion" resultType="com.starfield.api.entity.Creation">
+        SELECT c.*
+        FROM creation c
+        LEFT JOIN (
+            SELECT creation_id, MAX(created_at) AS latest_version_at
+            FROM creation_version
+            WHERE deleted = false
+            GROUP BY creation_id
+        ) v ON v.creation_id = c.id
+        WHERE c.deleted = false
+        <if test="keyword != null and keyword != ''">
+            AND (
+                c.name ILIKE ('%' || #{keyword} || '%')
+                OR c.translated_name ILIKE ('%' || #{keyword} || '%')
+                OR c.author ILIKE ('%' || #{keyword} || '%')
+                OR c.tags ILIKE ('%' || #{keyword} || '%')
+            )
+        </if>
+        ORDER BY v.latest_version_at DESC NULLS LAST, c.id DESC
+    </select>
+
+</mapper>

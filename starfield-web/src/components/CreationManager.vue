@@ -18,6 +18,9 @@ const pageSize = ref(12)
 const keyword = ref('')
 const loading = ref(false)
 
+/** 排序方式：latestVersion 最近更新（默认），createdAt 最近分享 */
+const sortBy = ref('latestVersion')
+
 /** 上传对话框 */
 const showUploadDialog = ref(false)
 const uploading = ref(false)
@@ -160,7 +163,7 @@ function handleAuthorClick(author: string) {
 async function loadCreations() {
   loading.value = true
   try {
-    var res = await getCreations(currentPage.value, pageSize.value, keyword.value || undefined)
+    var res = await getCreations(currentPage.value, pageSize.value, keyword.value || undefined, sortBy.value)
     creations.value = res.records
     total.value = res.total
   } catch {
@@ -173,6 +176,14 @@ async function loadCreations() {
 function handleSearch() {
   selectedTag.value = ''
   selectedAuthor.value = ''
+  currentPage.value = 1
+  loadCreations()
+}
+
+/** 切换排序方式 */
+function setSort(value: string) {
+  if (sortBy.value === value) return
+  sortBy.value = value
   currentPage.value = 1
   loadCreations()
 }
@@ -806,7 +817,13 @@ onMounted(() => {
 
     <!-- 顶部操作栏 -->
     <div class="toolbar">
-      <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
+      <div class="toolbar-left">
+        <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
+        <div class="sort-tabs">
+          <el-button text :class="{ active: sortBy === 'latestVersion' }" @click="setSort('latestVersion')">最近更新</el-button>
+          <el-button text :class="{ active: sortBy === 'createdAt' }" @click="setSort('createdAt')">最近分享</el-button>
+        </div>
+      </div>
       <el-button type="primary" :icon="Plus" @click="openUploadDialog">分享 Mod</el-button>
     </div>
 
@@ -1220,6 +1237,10 @@ onMounted(() => {
 
 <style scoped>
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.toolbar-left { display: flex; align-items: center; gap: 8px; }
+.sort-tabs { display: flex; align-items: center; gap: 2px; }
+.sort-tabs .el-button { margin-left: 0; padding: 4px 8px; color: var(--el-text-color-regular); }
+.sort-tabs .el-button.active { color: var(--el-color-primary); font-weight: 600; }
 .tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .filter-tag { cursor: pointer; }
 .author-filter { align-items: center; }

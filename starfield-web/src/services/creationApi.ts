@@ -9,9 +9,9 @@ export function createCreation(formData: FormData): Promise<Creation> {
 }
 
 /** 分页查询作品列表 */
-export function getCreations(page = 1, size = 12, keyword?: string): Promise<CreationPageResponse> {
+export function getCreations(page = 1, size = 12, keyword?: string, sort?: string): Promise<CreationPageResponse> {
   return api.get<CreationPageResponse>('/api/creations', {
-    params: { page, size, keyword },
+    params: { page, size, keyword, sort },
   }).then((res) => res.data)
 }
 

@@ -1,6 +1,7 @@
 package com.starfield.api.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.dto.CreationPageResponse;
 import com.starfield.api.dto.CreationRequest;
@@ -242,10 +243,17 @@ public class CreationService {
      * @param page    页码
      * @param size    每页大小
      * @param keyword 搜索关键词（可选）
+     * @param sort    排序方式（可选，latestVersion 按最新版本添加时间倒序，其余按作品创建时间倒序）
      * @return 分页响应
      */
-    public CreationPageResponse list(int page, int size, String keyword) {
-        log.info("[list] 查询作品列表 page {} size {} keyword {}", page, size, keyword);
+    public CreationPageResponse list(int page, int size, String keyword, String sort) {
+        log.info("[list] 查询作品列表 page {} size {} keyword {} sort {}", page, size, keyword, sort);
+
+        if ("latestVersion".equals(sort)) {
+            var normalizedKeyword = Objects.nonNull(keyword) && !keyword.isBlank() ? keyword : null;
+            var pageResult = creationRepository.selectPageOrderByLatestVersion(new Page<>(page, size), normalizedKeyword);
+            return toPageResponse(pageResult);
+        }
 
         var wrapper = new QueryWrapper<Creation>().orderByDesc("created_at");
         if (Objects.nonNull(keyword) && !keyword.isBlank()) {
@@ -256,10 +264,19 @@ public class CreationService {
         }
 
         var pageResult = creationRepository.selectPage(new Page<>(page, size), wrapper);
+        return toPageResponse(pageResult);
+    }
+
+    /**
+     * 将分页查询结果映射为作品分页响应（补充版本与图片信息）
+     *
+     * @param pageResult 作品分页结果
+     * @return 分页响应
+     */
+    private CreationPageResponse toPageResponse(IPage<Creation> pageResult) {
         var records = pageResult.getRecords().stream()
                 .map(c -> toResponse(c, getVersionInfos(c.getId()), getImageInfos(c.getId())))
                 .collect(Collectors.toList());
-
         return new CreationPageResponse(records, pageResult.getTotal(), pageResult.getCurrent(), pageResult.getPages());
     }
 

@@ -67,15 +67,17 @@ public class CreationController {
      * @param page    页码
      * @param size    每页大小
      * @param keyword 搜索关键词
+     * @param sort    排序方式（latestVersion 按最新版本添加时间，默认按作品创建时间）
      * @return 分页响应
      */
     @GetMapping
     public ResponseEntity<CreationPageResponse> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "12") int size,
-            @RequestParam(required = false) String keyword) {
-        log.info("[list] 收到查询作品列表请求 page {} size {} keyword {}", page, size, keyword);
-        var response = creationService.list(page, size, keyword);
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String sort) {
+        log.info("[list] 收到查询作品列表请求 page {} size {} keyword {} sort {}", page, size, keyword, sort);
+        var response = creationService.list(page, size, keyword, sort);
         return ResponseEntity.ok(response);
     }
 
