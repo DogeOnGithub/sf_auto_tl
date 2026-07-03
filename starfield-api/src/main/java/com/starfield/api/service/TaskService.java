@@ -412,6 +412,9 @@ public class TaskService {
             log.error("[incrementSyncFailCount] 同步失败次数超过阈值 标记任务失败 taskId {} count {}", task.getTaskId(), count);
             task.setStatus(TaskStatus.failed);
             task.setErrorMessage("引擎同步失败次数超过 " + MAX_SYNC_FAIL_COUNT + " 次");
+            // 强制置为 failed 时同步清理本地文件和确认记录 与其他 failed 路径保持一致 避免文件泄漏
+            handleTaskFailed(task);
+            cleanupConfirmationRecords(task.getTaskId());
         }
         translationTaskRepository.updateById(task);
     }
@@ -500,6 +503,18 @@ public class TaskService {
         deleteFileQuietly(task.getFilePath(), task.getTaskId());
         deleteFileQuietly(task.getOutputFilePath(), task.getTaskId());
         deleteFileQuietly(task.getOriginalBackupPath(), task.getTaskId());
+
+        // 兜底：output/backup 路径可能为 null（如同步失败强制置为 failed 时），根据 filePath 反推 translated/backup 路径删除
+        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
+            var basePath = task.getFilePath();
+            var dotIdx = basePath.lastIndexOf('.');
+            if (dotIdx > 0) {
+                var name = basePath.substring(0, dotIdx);
+                var ext = basePath.substring(dotIdx);
+                deleteFileQuietly(name + "_translated" + ext, task.getTaskId());
+                deleteFileQuietly(name + "_backup" + ext, task.getTaskId());
+            }
+        }
 
         if (Objects.nonNull(zipPath)) {
             deleteFileQuietly(zipPath.toString(), task.getTaskId());
@@ -600,6 +615,18 @@ public class TaskService {
         if (deleteFileIfExists(task.getFilePath())) count++;
         if (deleteFileIfExists(task.getOutputFilePath())) count++;
         if (deleteFileIfExists(task.getOriginalBackupPath())) count++;
+
+        // 兜底：output/backup 路径可能为 null，根据 filePath 反推 translated/backup 路径删除
+        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
+            var basePath = task.getFilePath();
+            var dotIdx = basePath.lastIndexOf('.');
+            if (dotIdx > 0) {
+                var name = basePath.substring(0, dotIdx);
+                var ext = basePath.substring(dotIdx);
+                if (deleteFileIfExists(name + "_translated" + ext)) count++;
+                if (deleteFileIfExists(name + "_backup" + ext)) count++;
+            }
+        }
         return count;
     }
 
