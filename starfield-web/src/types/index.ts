@@ -11,6 +11,7 @@ export interface TaskResponse {
   fileName: string
   status: string
   confirmationMode: string
+  sourceType: string
   progress: { translated: number; total: number }
   creation: TaskCreationInfo | null
   prompt: { id: number; name: string } | null

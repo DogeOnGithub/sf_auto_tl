@@ -34,6 +34,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理无效 Strings 格式异常（返回具体校验信息便于前端提示）
+     */
+    @ExceptionHandler(FileUploadService.InvalidStringsFormatException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidStringsFormat(FileUploadService.InvalidStringsFormatException e) {
+        log.warn("[handleInvalidStringsFormat] {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse("INVALID_STRINGS_FORMAT", e.getMessage()));
+    }
+
+    /**
      * 处理文件大小超限异常
      */
     @ExceptionHandler(MaxUploadSizeExceededException.class)

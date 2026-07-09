@@ -67,6 +67,7 @@ class TestPostTranslate:
             llm_api_key=None,
             llm_model=None,
             enable_glossary_extraction=True,
+            source_type="esm",
         )
 
     def test_submit_missing_task_id_returns_400(self, client):

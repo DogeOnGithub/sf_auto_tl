@@ -116,3 +116,21 @@ WEAP、ARMO、NPC_ 等记录类型支持 Object Template 系统。这些记录�
 已知的引擎模板层级名：`Fallback`、`Default`、`Entry`、`Standard`、`Standard Low/Med/High/Very High`、`Auto Low/Med/High`、`Upgraded Low/Med/High`、`Silenced Low/Med/High`、`Sniper Low/Med/High`、`Simple`。
 
 如果发现新的模板层级名导致翻译后崩溃，加到 `OBJECT_TEMPLATE_LEVEL_NAMES` 中。
+
+## 开启本地化的 mod（Strings 文件）
+
+开启本地化（TES4 头 flags bit 7 `0x80`）的 ESM 会把 FULL/DESC 等可翻译文本移到外部 Strings 文件（`.STRINGS`/`.DLSTRINGS`/`.ILSTRINGS`），ESM 内仅保留 4 字节字符串 ID 引用。这类 mod 不走 ESM 子记录解析，而是由 `strings_parser.py` / `strings_writer.py` 直接解析和回写 Strings 文件（不触碰 ESM）。
+
+### Strings 文件格式（小端）
+
+- Header：`uint32 count` + `uint32 data_size`（数据区字节数）
+- 目录：`count × (uint32 string_id, uint32 offset)`，offset 相对数据区起点（数据区起点 = 8 + count×8）
+- 数据区：
+  - `.STRINGS`：每条为 null 结尾的原始字符串，无长度前缀
+  - `.DLSTRINGS`/`.ILSTRINGS`：每条为 `uint32 长度`（含 null）+ 字符串字节 + null
+
+编码固定 UTF-8。空文件（count=0）为合法 8 字节头。
+
+### record_id 约定
+
+采用三段式 `FILETYPE:id:sub_tag`（如 `STRINGS:5:STR`、`DLSTRINGS:10:DL`、`ILSTRINGS:100:IL`），与 ESM 的 `RECORD_TYPE:FORM_ID:SUBRECORD_TYPE` 对齐，从而复用去重、缓存、确认记录等既有逻辑。回写时保留全部 string_id 与顺序，仅替换文本、重算 offset/data_size；未翻译到的条目按原文保留。

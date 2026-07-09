@@ -89,6 +89,7 @@ function addTask(taskId: string) {
     fileName: '',
     status: 'waiting',
     confirmationMode: 'direct',
+    sourceType: '',
     progress: { translated: 0, total: 0 },
     creation: null,
     prompt: null,

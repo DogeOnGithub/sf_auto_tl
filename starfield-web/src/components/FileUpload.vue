@@ -2,11 +2,23 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, Check } from '@element-plus/icons-vue'
-import { uploadFile } from '@/services/fileApi'
+import { uploadFile, uploadStringsZip } from '@/services/fileApi'
 import { getCreations } from '@/services/creationApi'
 import { listPrompts } from '@/services/promptApi'
+import { createZip } from '@/utils/zip'
+import type { ZipEntry } from '@/utils/zip'
 import type { FileUploadResponse, Creation, PromptItem } from '@/types'
 import type { UploadRequestOptions } from 'element-plus'
+
+/** 翻译源模式由父组件控制（页面标题旁的选择器）：esm（ESM/ESP 文件）或 strings（本地化 mod 的 Strings 文件夹） */
+const props = defineProps<{ sourceMode?: 'esm' | 'strings' }>()
+const sourceMode = computed(() => props.sourceMode ?? 'esm')
+
+/** Strings 文件夹选择的隐藏 input 引用 */
+const stringsInput = ref<HTMLInputElement | null>(null)
+
+/** Strings 文件三种扩展名 */
+const STRINGS_EXTENSIONS = ['.strings', '.dlstrings', '.ilstrings']
 
 const MAX_FILE_SIZE = 4096 * 1024 * 1024 // 4096MB
 
@@ -118,17 +130,8 @@ async function handlePromptModeChange(val: string) {
   }
 }
 
-/** 上传前校验 */
-function beforeUpload(file: File): boolean {
-  var lowerName = file.name.toLowerCase()
-  if (!lowerName.endsWith('.esm') && !lowerName.endsWith('.esp')) {
-    ElMessage.error('仅支持 .esm / .esp 格式的文件')
-    return false
-  }
-  if (file.size > MAX_FILE_SIZE) {
-    ElMessage.error('文件大小不能超过 4GB')
-    return false
-  }
+/** 校验关联/Prompt/LLM 等通用选项，ESM 与 Strings 两种模式共用 */
+function validateOptions(): boolean {
   if (linkMode.value && !selectedVersionId.value) {
     ElMessage.warning('请先选择要关联的作品版本')
     return false
@@ -162,6 +165,129 @@ function beforeUpload(file: File): boolean {
     }
   }
   return true
+}
+
+/** 上传前校验（ESM/ESP 模式） */
+function beforeUpload(file: File): boolean {
+  var lowerName = file.name.toLowerCase()
+  if (!lowerName.endsWith('.esm') && !lowerName.endsWith('.esp')) {
+    ElMessage.error('仅支持 .esm / .esp 格式的文件')
+    return false
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.error('文件大小不能超过 4GB')
+    return false
+  }
+  return validateOptions()
+}
+
+/** 取文件扩展名（小写，含点） */
+function getExt(name: string): string {
+  var i = name.lastIndexOf('.')
+  return i < 0 ? '' : name.slice(i).toLowerCase()
+}
+
+/** 触发 Strings 文件夹选择 */
+function triggerStringsSelect() {
+  if (uploading.value) return
+  stringsInput.value?.click()
+}
+
+/** 选择 Strings 文件夹后的处理：筛选三个文件 → 校验 → 打包 zip → 上传 */
+async function handleStringsFolderSelect(event: Event) {
+  var input = event.target as HTMLInputElement
+  var files = Array.from(input.files ?? [])
+  // 清空 value，便于再次选择同一文件夹时也能触发 change
+  input.value = ''
+  await processStringsFiles(files)
+}
+
+/** 校验并上传 Strings 文件 */
+async function processStringsFiles(files: File[]) {
+  if (!validateOptions()) return
+
+  // 按扩展名筛选三个 Strings 文件
+  var picked: Record<string, File> = {}
+  for (var f of files) {
+    var ext = getExt(f.name)
+    if (!STRINGS_EXTENSIONS.includes(ext)) continue
+    if (picked[ext]) {
+      ElMessage.error(`文件夹中存在多个 ${ext} 文件，请确保只有一个`)
+      return
+    }
+    picked[ext] = f
+  }
+
+  var missing = STRINGS_EXTENSIONS.filter((e) => !picked[e])
+  if (missing.length > 0) {
+    ElMessage.error(`缺少 Strings 文件：${missing.join('、')}，需包含 .strings/.dlstrings/.ilstrings 三个文件`)
+    return
+  }
+
+  // 校验三个文件同名且以 _zhhans 结尾
+  var baseName = ''
+  for (var ext of STRINGS_EXTENSIONS) {
+    var name = picked[ext].name
+    var base = name.slice(0, name.length - ext.length)
+    if (!baseName) {
+      baseName = base
+    } else if (baseName.toLowerCase() !== base.toLowerCase()) {
+      ElMessage.error('三个 Strings 文件名称不一致，请确认来自同一 mod')
+      return
+    }
+  }
+  if (!baseName.toLowerCase().endsWith('_zhhans')) {
+    ElMessage.error('Strings 文件名必须以 _zhhans 结尾（仅支持简体中文本地化）')
+    return
+  }
+
+  // 读取内容并打包为 zip（保留原始文件名）
+  var entries: ZipEntry[] = []
+  for (var ext of STRINGS_EXTENSIONS) {
+    var file = picked[ext]
+    var buf = await file.arrayBuffer()
+    entries.push({ name: file.name, data: new Uint8Array(buf) })
+  }
+  var zipBlob = createZip(entries)
+  var zipFile = new File([zipBlob], `${baseName}.zip`, { type: 'application/zip' })
+
+  await handleStringsUpload(zipFile)
+}
+
+/** 上传打包好的 Strings zip */
+async function handleStringsUpload(zipFile: File) {
+  uploading.value = true
+  uploadPercent.value = 0
+  try {
+    var versionId = linkMode.value ? (selectedVersionId.value ?? undefined) : undefined
+    var pId = promptMode.value === 'select' ? (selectedPromptId.value ?? undefined) : undefined
+    var pName = promptMode.value === 'new' ? newPromptName.value.trim() : undefined
+    var pContent = promptMode.value === 'new' ? newPromptContent.value.trim() : undefined
+
+    var result = await uploadStringsZip(
+      zipFile,
+      (percent) => { uploadPercent.value = percent },
+      versionId,
+      pId,
+      pName || undefined,
+      pContent || undefined,
+      confirmationMode.value,
+      useCustomLlm.value ? llmBaseUrl.value.trim() : undefined,
+      useCustomLlm.value ? llmApiKey.value.trim() : undefined,
+      useCustomLlm.value ? llmModel.value.trim() : undefined,
+    )
+    if (useCustomLlm.value) {
+      saveLlmConfig()
+    }
+    ElMessage.success(`${result.fileName} 上传成功`)
+    emit('upload-success', result)
+  } catch (err: any) {
+    var msg = err?.response?.data?.message || 'Strings 上传失败，请重试'
+    ElMessage.error(msg)
+  } finally {
+    uploading.value = false
+    uploadPercent.value = 0
+  }
 }
 
 /** 自定义上传处理 */
@@ -349,7 +475,9 @@ async function handleUpload(options: UploadRequestOptions) {
       </div>
     </div>
 
+    <!-- ESM/ESP 上传 -->
     <el-upload
+      v-if="sourceMode === 'esm'"
       drag
       accept=".esm,.esp"
       :show-file-list="false"
@@ -367,6 +495,27 @@ async function handleUpload(options: UploadRequestOptions) {
         <p class="upload-hint">支持 .esm / .esp 格式，最大 4GB</p>
       </div>
     </el-upload>
+
+    <!-- Strings 文件夹上传（开启本地化的 mod） -->
+    <div v-else class="strings-upload" :class="{ disabled: uploading }" @click="triggerStringsSelect">
+      <input
+        ref="stringsInput"
+        type="file"
+        webkitdirectory
+        multiple
+        style="display: none"
+        @change="handleStringsFolderSelect"
+      />
+      <div v-if="uploading" class="upload-progress">
+        <el-progress :percentage="uploadPercent" :stroke-width="10" />
+        <p class="upload-hint">正在打包上传...</p>
+      </div>
+      <div v-else class="upload-placeholder">
+        <el-icon class="upload-icon"><UploadFilled /></el-icon>
+        <p class="upload-text">点击选择包含 Strings 文件的文件夹</p>
+        <p class="upload-hint">需包含 .strings / .dlstrings / .ilstrings 三个文件，且以 _zhhans 结尾</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -485,5 +634,23 @@ async function handleUpload(options: UploadRequestOptions) {
 
 .upload-progress {
   padding: 30px 40px;
+}
+
+.strings-upload {
+  border: 1px dashed var(--el-border-color);
+  border-radius: 6px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--el-fill-color-blank);
+  transition: border-color 0.2s;
+}
+
+.strings-upload:hover {
+  border-color: var(--el-color-primary);
+}
+
+.strings-upload.disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 </style>

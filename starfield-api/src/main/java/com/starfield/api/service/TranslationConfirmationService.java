@@ -348,7 +348,8 @@ public class TranslationConfirmationService {
                 taskId,
                 absoluteFilePath,
                 assemblyItems,
-                callbackUrl
+                callbackUrl,
+                task.getSourceType()
         );
 
         engineClient.submitAssembly(request);

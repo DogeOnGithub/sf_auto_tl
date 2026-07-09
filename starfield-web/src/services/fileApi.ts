@@ -52,3 +52,55 @@ export function uploadFile(
     })
     .then((res) => res.data)
 }
+
+/** 上传开启本地化 mod 的 Strings 文件（前端已打包为 zip），参数与 uploadFile 一致 */
+export function uploadStringsZip(
+  file: File,
+  onProgress?: (percent: number) => void,
+  creationVersionId?: number,
+  promptId?: number,
+  newPromptName?: string,
+  newPromptContent?: string,
+  confirmationMode?: string,
+  llmBaseUrl?: string,
+  llmApiKey?: string,
+  llmModel?: string,
+): Promise<FileUploadResponse> {
+  var formData = new FormData()
+  formData.append('file', file)
+  if (creationVersionId) {
+    formData.append('creationVersionId', String(creationVersionId))
+  }
+  if (promptId) {
+    formData.append('promptId', String(promptId))
+  }
+  if (newPromptName) {
+    formData.append('newPromptName', newPromptName)
+  }
+  if (newPromptContent) {
+    formData.append('newPromptContent', newPromptContent)
+  }
+  if (confirmationMode) {
+    formData.append('confirmationMode', confirmationMode)
+  }
+  if (llmBaseUrl) {
+    formData.append('llmBaseUrl', llmBaseUrl)
+  }
+  if (llmApiKey) {
+    formData.append('llmApiKey', llmApiKey)
+  }
+  if (llmModel) {
+    formData.append('llmModel', llmModel)
+  }
+  return api
+    .post<FileUploadResponse>('/api/files/upload-strings', formData, {
+      timeout: 1800000,
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) {
+          onProgress(Math.round((e.loaded * 100) / e.total))
+        }
+      },
+    })
+    .then((res) => res.data)
+}

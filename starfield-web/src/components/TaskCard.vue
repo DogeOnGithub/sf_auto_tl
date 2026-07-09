@@ -55,6 +55,12 @@ function formatTime(dateStr: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+/** 来源类型中文显示（strings 为开启本地化的 mod） */
+const sourceTypeLabel = computed(() => props.task.sourceType === 'strings' ? '本地化 mod' : 'ESM/ESP')
+
+/** 来源类型标签颜色 */
+const sourceTypeTagType = computed(() => props.task.sourceType === 'strings' ? 'success' : 'info')
+
 /** 状态标签颜色映射 */
 const statusTagType = computed(() => {
   var map: Record<string, string> = {
@@ -124,7 +130,10 @@ async function handleExpire() {
   <el-card class="task-card" shadow="hover">
     <div class="task-header">
       <span class="task-filename">{{ task.fileName }}</span>
-      <el-tag :type="statusTagType" size="small">{{ statusLabel }}</el-tag>
+      <div class="task-tags">
+        <el-tag v-if="task.sourceType" :type="sourceTypeTagType" size="small" effect="plain">{{ sourceTypeLabel }}</el-tag>
+        <el-tag :type="statusTagType" size="small">{{ statusLabel }}</el-tag>
+      </div>
     </div>
 
     <div class="task-meta">
@@ -196,6 +205,13 @@ async function handleExpire() {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.task-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .task-filename {

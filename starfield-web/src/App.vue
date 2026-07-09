@@ -23,6 +23,9 @@ function getMenuFromHash(): string {
 
 const taskListRef = ref<InstanceType<typeof TaskList>>()
 const activeMenu = ref(getMenuFromHash())
+
+/** 翻译源模式（控制 FileUpload：ESM/ESP 文件 或 本地化 mod 的 Strings 文件夹） */
+const uploadSourceMode = ref<'esm' | 'strings'>('esm')
 const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
 const { isDark, toggleTheme } = useTheme()
 
@@ -139,8 +142,14 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         </div>
 
         <div v-if="activeMenu === 'translate'" class="page-content">
-          <h2 class="page-title">翻译任务</h2>
-          <FileUpload @upload-success="handleUploadSuccess" />
+          <div class="page-header">
+            <h2 class="page-title">翻译任务</h2>
+            <el-radio-group v-model="uploadSourceMode" size="small">
+              <el-radio-button value="esm">ESM / ESP 文件</el-radio-button>
+              <el-radio-button value="strings">本地化 mod</el-radio-button>
+            </el-radio-group>
+          </div>
+          <FileUpload :source-mode="uploadSourceMode" @upload-success="handleUploadSuccess" />
           <TaskList ref="taskListRef" :limit="3" />
         </div>
 
@@ -235,6 +244,18 @@ function handleUploadSuccess(payload: FileUploadResponse) {
   font-size: 20px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.page-header .page-title {
+  margin: 0;
 }
 
 .page-content {

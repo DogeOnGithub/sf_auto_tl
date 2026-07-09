@@ -10,6 +10,7 @@ public record TaskResponse(
         String fileName,
         String status,
         String confirmationMode,
+        String sourceType,
         Progress progress,
         CreationInfo creation,
         PromptInfo prompt,

@@ -47,8 +47,9 @@ def create_app() -> Flask:
         llm_api_key = data.get("llmApiKey")
         llm_model = data.get("llmModel")
         enable_glossary_extraction = data.get("enableGlossaryExtraction", True)
+        source_type = data.get("sourceType", "esm")
 
-        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s", task_id, file_path, skip_cache, llm_model)
+        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s source_type %s", task_id, file_path, skip_cache, llm_model, source_type)
 
         result = translator.submit_task(
             task_id=task_id,
@@ -62,6 +63,7 @@ def create_app() -> Flask:
             llm_api_key=llm_api_key,
             llm_model=llm_model,
             enable_glossary_extraction=enable_glossary_extraction,
+            source_type=source_type,
         )
         return jsonify(result), 202
 
@@ -88,14 +90,16 @@ def create_app() -> Flask:
             return jsonify({"error": "MISSING_PARAMS", "message": "taskId、filePath 和 items 为必填参数"}), 400
 
         callback_url = data.get("callbackUrl")
+        source_type = data.get("sourceType", "esm")
 
-        logger.info("[submit_assembly] 收到组装请求 task_id %s items_count %d", task_id, len(items))
+        logger.info("[submit_assembly] 收到组装请求 task_id %s items_count %d source_type %s", task_id, len(items), source_type)
 
         result = translator.submit_assembly(
             task_id=task_id,
             file_path=file_path,
             items=items,
             callback_url=callback_url,
+            source_type=source_type,
         )
         return jsonify(result), 202
 

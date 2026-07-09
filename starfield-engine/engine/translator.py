@@ -13,8 +13,14 @@ from engine.esm_parser import parse_esm
 from engine.esm_writer import write_esm
 from engine.glossary_extractor import extract_glossary
 from engine.llm_client import _split_batches, translate_records
+from engine.strings_parser import parse_strings_dir
+from engine.strings_writer import write_strings_dir
 
 logger = logging.getLogger(__name__)
+
+# 翻译来源类型
+SOURCE_TYPE_ESM = "esm"
+SOURCE_TYPE_STRINGS = "strings"
 
 # 任务状态常量
 STATUS_WAITING = "waiting"
@@ -29,6 +35,53 @@ VALID_STATUSES = frozenset({
     STATUS_WAITING, STATUS_PARSING, STATUS_EXTRACTING_GLOSSARY,
     STATUS_TRANSLATING, STATUS_ASSEMBLING, STATUS_COMPLETED, STATUS_FAILED,
 })
+
+
+def _parse_source(source_type: str, file_path: str):
+    """按来源类型解析待翻译文本。
+
+    Args:
+        source_type: 来源类型（esm 或 strings）。
+        file_path: ESM 文件路径，或 Strings 目录路径。
+
+    Returns:
+        StringRecord 列表。
+    """
+    if source_type == SOURCE_TYPE_STRINGS:
+        return parse_strings_dir(file_path)
+    return parse_esm(file_path)
+
+
+def _write_output(source_type: str, file_path: str, translations: Dict[str, str]) -> tuple[str, str | None]:
+    """按来源类型回写翻译结果。
+
+    Args:
+        source_type: 来源类型（esm 或 strings）。
+        file_path: ESM 文件路径，或 Strings 目录路径。
+        translations: record_id -> 译文 的映射。
+
+    Returns:
+        (output_path, backup_path)。strings 模式下 output_path 为输出目录，backup_path 为 None。
+    """
+    if source_type == SOURCE_TYPE_STRINGS:
+        output_dir = f"{file_path.rstrip('/')}_translated"
+        result = write_strings_dir(
+            original_dir=file_path,
+            translations=translations,
+            output_dir=output_dir,
+        )
+        return result.output_dir, None
+
+    name, ext = file_path.rsplit(".", 1)
+    output_path = f"{name}_translated.{ext}"
+    backup_path = f"{name}_backup.{ext}"
+    result = write_esm(
+        original_path=file_path,
+        translations=translations,
+        output_path=output_path,
+        backup_path=backup_path,
+    )
+    return result.output_path, result.backup_path
 
 
 def merge_glossary_with_dictionary(
@@ -159,12 +212,13 @@ class Translator:
         llm_api_key: str | None = None,
         llm_model: str | None = None,
         enable_glossary_extraction: bool = True,
+        source_type: str = SOURCE_TYPE_ESM,
     ) -> Dict[str, str]:
         """提交翻译任务并异步执行。
 
         Args:
             task_id: 任务唯一标识。
-            file_path: ESM 文件路径。
+            file_path: ESM 文件路径，或 Strings 目录路径（strings 模式）。
             target_lang: 目标语言。
             custom_prompt: 用户自定义 Prompt。
             dictionary_entries: 词典词条列表。
@@ -174,18 +228,19 @@ class Translator:
             llm_api_key: 自定义 LLM API Key。
             llm_model: 自定义 LLM 模型名称。
             enable_glossary_extraction: 是否启用自动术语提取 默认 True。
+            source_type: 来源类型（esm 或 strings）默认 esm。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s enable_glossary_extraction %s", task_id, file_path, skip_cache, llm_model, enable_glossary_extraction)
+        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s enable_glossary_extraction %s source_type %s", task_id, file_path, skip_cache, llm_model, enable_glossary_extraction, source_type)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model, enable_glossary_extraction),
+            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model, enable_glossary_extraction, source_type),
             daemon=True,
         )
         thread.start()
@@ -205,14 +260,15 @@ class Translator:
         llm_api_key: str | None = None,
         llm_model: str | None = None,
         enable_glossary_extraction: bool = True,
+        source_type: str = SOURCE_TYPE_ESM,
     ) -> None:
         """执行翻译任务的完整流程：解析 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
         try:
-            # 1. 解析 ESM
+            # 1. 解析 ESM 或 Strings 目录
             self._update_status(task_id, STATUS_PARSING)
             self._report_progress(task_id, callback_url)
-            logger.info("[_run_task] 开始解析 task_id %s", task_id)
-            records = parse_esm(file_path)
+            logger.info("[_run_task] 开始解析 task_id %s source_type %s", task_id, source_type)
+            records = _parse_source(source_type, file_path)
             total = len(records)
             self._update_progress(task_id, 0, total)
 
@@ -402,24 +458,15 @@ class Translator:
             else:
                 self._update_status(task_id, STATUS_ASSEMBLING)
                 self._report_progress(task_id, callback_url)
-                logger.info("[_run_task] 开始重组 task_id %s", task_id)
+                logger.info("[_run_task] 开始重组 task_id %s source_type %s", task_id, source_type)
 
-                name, ext = file_path.rsplit(".", 1)
-                output_path = f"{name}_translated.{ext}"
-                backup_path = f"{name}_backup.{ext}"
-
-                result = write_esm(
-                    original_path=file_path,
-                    translations=translations,
-                    output_path=output_path,
-                    backup_path=backup_path,
-                )
+                output_path, backup_path = _write_output(source_type, file_path, translations)
 
                 with self._lock:
                     if task_id in self._tasks:
                         self._tasks[task_id]["status"] = STATUS_COMPLETED
-                        self._tasks[task_id]["outputFilePath"] = result.output_path
-                        self._tasks[task_id]["originalBackupPath"] = result.backup_path
+                        self._tasks[task_id]["outputFilePath"] = output_path
+                        self._tasks[task_id]["originalBackupPath"] = backup_path
 
                 self._report_progress(task_id, callback_url)
                 logger.info("[_run_task] 翻译任务完成 task_id %s", task_id)
@@ -435,26 +482,28 @@ class Translator:
         file_path: str,
         items: List[Dict],
         callback_url: str | None = None,
+        source_type: str = SOURCE_TYPE_ESM,
     ) -> Dict[str, str]:
         """提交组装任务（仅重组阶段，使用已确认的翻译结果）。
 
         Args:
             task_id: 任务唯一标识。
-            file_path: 原始 ESM 文件路径。
+            file_path: 原始 ESM 文件路径，或 Strings 目录路径（strings 模式）。
             items: 已确认的翻译条目列表，每条包含 recordId 和 targetText。
             callback_url: 进度回调地址。
+            source_type: 来源类型（esm 或 strings）默认 esm。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_assembly] 提交组装任务 task_id %s file_path %s items_count %d", task_id, file_path, len(items))
+        logger.info("[submit_assembly] 提交组装任务 task_id %s file_path %s items_count %d source_type %s", task_id, file_path, len(items), source_type)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_assembly,
-            args=(task_id, file_path, items, callback_url),
+            args=(task_id, file_path, items, callback_url, source_type),
             daemon=True,
         )
         thread.start()
@@ -467,8 +516,9 @@ class Translator:
         file_path: str,
         items: List[Dict],
         callback_url: str | None = None,
+        source_type: str = SOURCE_TYPE_ESM,
     ) -> None:
-        """执行组装任务：将已确认的翻译结果写回 ESM 文件。"""
+        """执行组装任务：将已确认的翻译结果写回 ESM 文件或 Strings 目录。"""
         try:
             translations = {item["recordId"]: item["targetText"] for item in items}
             total = len(translations)
@@ -476,24 +526,15 @@ class Translator:
 
             self._update_status(task_id, STATUS_ASSEMBLING)
             self._report_progress(task_id, callback_url)
-            logger.info("[_run_assembly] 开始重组 task_id %s translations_count %d", task_id, total)
+            logger.info("[_run_assembly] 开始重组 task_id %s translations_count %d source_type %s", task_id, total, source_type)
 
-            name, ext = file_path.rsplit(".", 1)
-            output_path = f"{name}_translated.{ext}"
-            backup_path = f"{name}_backup.{ext}"
-
-            result = write_esm(
-                original_path=file_path,
-                translations=translations,
-                output_path=output_path,
-                backup_path=backup_path,
-            )
+            output_path, backup_path = _write_output(source_type, file_path, translations)
 
             with self._lock:
                 if task_id in self._tasks:
                     self._tasks[task_id]["status"] = STATUS_COMPLETED
-                    self._tasks[task_id]["outputFilePath"] = result.output_path
-                    self._tasks[task_id]["originalBackupPath"] = result.backup_path
+                    self._tasks[task_id]["outputFilePath"] = output_path
+                    self._tasks[task_id]["originalBackupPath"] = backup_path
 
             self._report_progress(task_id, callback_url)
             logger.info("[_run_assembly] 组装任务完成 task_id %s", task_id)

@@ -13,14 +13,23 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * 文件上传服务，处理 ESM 文件上传、校验、存储和任务创建
@@ -44,6 +53,18 @@ public class FileUploadService {
     private static final String ESM_EXTENSION = ".esm";
     private static final String ESP_EXTENSION = ".esp";
     private static final byte[] ESM_MAGIC_BYTES = "TES4".getBytes();
+
+    // Strings 模式：三个文件扩展名（小写，顺序固定用于确定性遍历）
+    private static final List<String> STRINGS_EXTENSIONS = List.of(".strings", ".dlstrings", ".ilstrings");
+    private static final Set<String> STRINGS_EXT_SET = Set.copyOf(STRINGS_EXTENSIONS);
+    // 仅支持简体中文本地化，文件名须以该后缀结尾
+    private static final String ZHHANS_SUFFIX = "_zhhans";
+    // 单个 Strings 文件大小上限（防止 zip 炸弹）
+    private static final long MAX_STRINGS_FILE_SIZE = 100L * 1024 * 1024;
+    // zip 内条目数量上限
+    private static final int MAX_ZIP_ENTRIES = 100;
+    // Strings 来源类型标识
+    private static final String SOURCE_TYPE_STRINGS = "strings";
 
     /**
      * 处理文件上传：校验格式、存储文件、解析 Prompt、创建任务、提交翻译引擎
@@ -88,6 +109,190 @@ public class FileUploadService {
         submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel);
 
         return new FileUploadResponse(taskId, fileName);
+    }
+
+    /**
+     * 处理开启本地化 mod 的 Strings 上传（前端将 strings 文件夹打包为 zip）
+     * 流程：解压校验（三文件齐全、同名、_zhhans 后缀、结构合法）→ 存储到 uploads/{taskId}/ → 创建任务 → 提交引擎
+     *
+     * @param file              前端打包的 zip 文件（内含三个 Strings 文件）
+     * @param creationVersionId 关联的 creation 版本 ID（可选）
+     * @param promptId          选择已有 Prompt 的 ID（可选）
+     * @param newPromptName     现场编写的 Prompt 名称（可选）
+     * @param newPromptContent  现场编写的 Prompt 内容（可选）
+     * @param confirmationMode  翻译确认模式（direct 或 confirmation，可选，默认 direct）
+     * @param llmBaseUrl        自定义 LLM API 地址（可选）
+     * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
+     * @param llmModel          自定义 LLM 模型名称（可选）
+     * @return 上传响应（taskId + baseName）
+     * @throws IOException 文件处理异常
+     */
+    public FileUploadResponse uploadStrings(MultipartFile file, Long creationVersionId,
+                                            Long promptId, String newPromptName,
+                                            String newPromptContent, String confirmationMode,
+                                            String llmBaseUrl, String llmApiKey, String llmModel) throws IOException {
+        var zipName = file.getOriginalFilename();
+        log.info("[uploadStrings] 开始处理 Strings 上传 zipName {} creationVersionId {} confirmationMode {} llmModel {}", zipName, creationVersionId, confirmationMode, llmModel);
+
+        var taskId = UUID.randomUUID().toString();
+        var extracted = extractAndValidateStrings(file, taskId);
+
+        var resolvedPrompt = resolvePrompt(promptId, newPromptName, newPromptContent);
+
+        var resolvedMode = (Objects.isNull(confirmationMode) || confirmationMode.isBlank()) ? "direct" : confirmationMode;
+
+        var task = createTask(taskId, extracted.baseName(), extracted.dir());
+        task.setSourceType(SOURCE_TYPE_STRINGS);
+        task.setCreationVersionId(creationVersionId);
+        task.setPromptId(resolvedPrompt.id());
+        task.setConfirmationMode(resolvedMode);
+        task.setLlmBaseUrl(llmBaseUrl);
+        task.setLlmModel(llmModel);
+        translationTaskRepository.insert(task);
+        log.info("[uploadStrings] 任务创建成功 taskId {} baseName {} confirmationMode {}", taskId, extracted.baseName(), resolvedMode);
+
+        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel);
+
+        return new FileUploadResponse(taskId, extracted.baseName());
+    }
+
+    /**
+     * 解压 zip 并校验 Strings 文件，合格后存储到 uploads/{taskId}/ 目录
+     * 校验规则：恰好包含 .strings/.dlstrings/.ilstrings 三个文件（大小写不敏感）、三者同名、
+     * 文件名以 _zhhans 结尾、每个文件头部结构合法（8 + count*8 + dataSize == 文件长度）
+     *
+     * @param file   上传的 zip 文件
+     * @param taskId 任务 ID（用于生成存储目录）
+     * @return 提取结果（存储目录 + 文件基础名）
+     * @throws IOException 解压或写入异常
+     */
+    StringsExtractResult extractAndValidateStrings(MultipartFile file, String taskId) throws IOException {
+        var uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) {
+            Files.createDirectories(uploadPath);
+        }
+        var targetDir = uploadPath.resolve(taskId);
+        Files.createDirectories(targetDir);
+
+        // ext(小写) -> 内容 / 原始文件名
+        var contents = new LinkedHashMap<String, byte[]>();
+        var names = new LinkedHashMap<String, String>();
+
+        try (var zis = new ZipInputStream(file.getInputStream(), StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            var entryCount = 0;
+            while ((entry = zis.getNextEntry()) != null) {
+                entryCount++;
+                if (entryCount > MAX_ZIP_ENTRIES) {
+                    throw new InvalidStringsFormatException("压缩包内文件过多");
+                }
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                // 仅取文件名部分，丢弃目录层级，防止 zip-slip 路径穿越
+                var simpleName = Paths.get(entry.getName()).getFileName().toString();
+                var dotIdx = simpleName.lastIndexOf('.');
+                if (dotIdx < 0) {
+                    continue;
+                }
+                var ext = simpleName.substring(dotIdx).toLowerCase();
+                if (!STRINGS_EXT_SET.contains(ext)) {
+                    continue;
+                }
+                if (contents.containsKey(ext)) {
+                    throw new InvalidStringsFormatException("压缩包内存在重复的 " + ext + " 文件");
+                }
+                contents.put(ext, readCapped(zis, MAX_STRINGS_FILE_SIZE));
+                names.put(ext, simpleName);
+            }
+        }
+
+        if (!contents.keySet().containsAll(STRINGS_EXT_SET)) {
+            throw new InvalidStringsFormatException("必须包含 .strings、.dlstrings、.ilstrings 三个文件");
+        }
+
+        // 校验三个文件同名且以 _zhhans 结尾
+        String baseName = null;
+        for (var ext : STRINGS_EXTENSIONS) {
+            var simpleName = names.get(ext);
+            var base = simpleName.substring(0, simpleName.length() - ext.length());
+            if (Objects.isNull(baseName)) {
+                baseName = base;
+            } else if (!baseName.equalsIgnoreCase(base)) {
+                throw new InvalidStringsFormatException("三个 Strings 文件名称不一致 " + baseName + " / " + base);
+            }
+        }
+        if (Objects.isNull(baseName) || !baseName.toLowerCase().endsWith(ZHHANS_SUFFIX)) {
+            throw new InvalidStringsFormatException("Strings 文件名必须以 _zhhans 结尾（仅支持简体中文本地化）");
+        }
+
+        // 校验结构并写入目录
+        for (var ext : STRINGS_EXTENSIONS) {
+            var bytes = contents.get(ext);
+            validateStringsHeader(bytes, ext);
+            Files.write(targetDir.resolve(names.get(ext)), bytes);
+        }
+
+        log.info("[extractAndValidateStrings] Strings 文件校验并存储成功 taskId {} baseName {} dir {}", taskId, baseName, targetDir);
+        return new StringsExtractResult(targetDir, baseName);
+    }
+
+    /**
+     * 校验单个 Strings 文件头部结构：8 + count*8 + dataSize 应等于文件总长度
+     *
+     * @param bytes 文件字节
+     * @param ext   扩展名（用于日志与异常信息）
+     */
+    void validateStringsHeader(byte[] bytes, String ext) {
+        if (bytes.length < 8) {
+            log.warn("[validateStringsHeader] 文件过小 ext {} length {}", ext, bytes.length);
+            throw new InvalidStringsFormatException(ext + " 不是有效的 Strings 文件");
+        }
+        var buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        var count = buffer.getInt(0) & 0xFFFFFFFFL;
+        var dataSize = buffer.getInt(4) & 0xFFFFFFFFL;
+        var expected = 8L + count * 8L + dataSize;
+        if (expected != bytes.length) {
+            log.warn("[validateStringsHeader] 文件结构非法 ext {} count {} dataSize {} length {}", ext, count, dataSize, bytes.length);
+            throw new InvalidStringsFormatException(ext + " 文件结构非法");
+        }
+    }
+
+    /**
+     * 从输入流读取字节，超过上限则抛出异常（防止 zip 炸弹）
+     *
+     * @param is       输入流
+     * @param maxBytes 最大字节数
+     * @return 读取到的字节
+     * @throws IOException 读取异常
+     */
+    private byte[] readCapped(InputStream is, long maxBytes) throws IOException {
+        var buffer = new ByteArrayOutputStream();
+        var chunk = new byte[8192];
+        var total = 0L;
+        int n;
+        while ((n = is.read(chunk)) != -1) {
+            total += n;
+            if (total > maxBytes) {
+                throw new InvalidStringsFormatException("Strings 文件过大 超过 " + (maxBytes / (1024 * 1024)) + "MB");
+            }
+            buffer.write(chunk, 0, n);
+        }
+        return buffer.toByteArray();
+    }
+
+    /**
+     * Strings 提取结果
+     */
+    record StringsExtractResult(Path dir, String baseName) {}
+
+    /**
+     * 无效 Strings 格式异常
+     */
+    public static class InvalidStringsFormatException extends RuntimeException {
+        public InvalidStringsFormatException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -220,7 +425,8 @@ public class FileUploadService {
                     skipCache,
                     llmBaseUrl,
                     llmApiKey,
-                    llmModel
+                    llmModel,
+                    task.getSourceType()
             );
 
             engineClient.submitTranslation(request);

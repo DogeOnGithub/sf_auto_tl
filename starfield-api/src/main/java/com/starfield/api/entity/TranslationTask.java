@@ -58,6 +58,9 @@ public class TranslationTask {
     @TableField("confirmation_mode")
     private String confirmationMode = "direct";
 
+    @TableField("source_type")
+    private String sourceType = "esm";
+
     @TableField("llm_base_url")
     private String llmBaseUrl;
 

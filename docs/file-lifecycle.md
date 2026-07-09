@@ -36,3 +36,25 @@ COS 上存储的是 `{taskId}.zip`（或关联 creation 时以作品名命名）
 - `output_file_path`：翻译文件路径（绝对路径）
 - `original_backup_path`：备份文件路径（绝对路径）
 - `download_url`：COS 下载地址（清理时置 null）
+
+## Strings 模式（开启本地化的 mod）
+
+开启本地化（Localized）的 mod 文本存储在外部 Strings 文件中，用户上传包含三个 Strings 文件的文件夹（前端打包为 zip 后上传），任务 `source_type` 为 `strings`。
+
+### 本地文件
+
+| 文件 | 路径 | 产生时机 |
+|------|------|---------|
+| 原始目录 | `./uploads/{taskId}/`（含 .strings/.dlstrings/.ilstrings 三个文件） | 用户上传、解压校验后 |
+| 翻译目录 | `./uploads/{taskId}_translated/`（三个同名文件） | Engine 翻译完成后（仅 direct 模式） |
+| ZIP 包 | `./uploads/{baseName}.zip`（内含小写 `strings/` 子目录） | 上传 COS 前打包 |
+
+strings 模式无 backup 文件。`file_path` 与 `output_file_path` 均为目录，清理时递归删除整个目录。
+
+### 打包结构
+
+ZIP 根目录下为小写 `strings/` 子目录，包含三个翻译后的 Strings 文件（文件名与上传一致，保留 `_zhhans` 后缀）。用户解压到游戏 Data 目录即生效（目录名必须小写）。
+
+### 数据库字段
+
+`translation_task.source_type`：来源类型，`esm`（默认）或 `strings`。strings 模式下 `file_path`/`output_file_path` 为目录，`original_backup_path` 为空。

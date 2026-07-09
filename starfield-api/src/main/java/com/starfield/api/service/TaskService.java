@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -59,6 +60,22 @@ public class TaskService {
 
     /** 任务过期天数 */
     private static final int TASK_EXPIRATION_DAYS = 5;
+
+    /** Strings 来源类型标识 */
+    private static final String SOURCE_TYPE_STRINGS = "strings";
+
+    /** Strings 模式 zip 内的子目录名（必须小写，解压到游戏 Data 目录才生效） */
+    private static final String STRINGS_ZIP_FOLDER = "strings/";
+
+    /**
+     * 判断任务是否为 strings 来源（开启本地化 mod 的 Strings 文件翻译）
+     *
+     * @param task 翻译任务
+     * @return 是否为 strings 来源
+     */
+    private boolean isStringsSource(TranslationTask task) {
+        return SOURCE_TYPE_STRINGS.equals(task.getSourceType());
+    }
 
     /**
      * 查询翻译任务状态和进度，尝试从引擎同步最新进度
@@ -295,6 +312,7 @@ public class TaskService {
                 task.getFileName(),
                 task.getStatus().name(),
                 task.getConfirmationMode(),
+                task.getSourceType(),
                 new TaskResponse.Progress(task.getTranslatedCount(), task.getTotalCount()),
                 creationInfo,
                 promptInfo,
@@ -475,19 +493,50 @@ public class TaskService {
         var zipFileName = getZipFileName(task);
         var zipPath = outputPath.getParent().resolve(zipFileName);
 
-        log.info("[createZipArchive] 开始打包 taskId {} zipPath {}", task.getTaskId(), zipPath);
+        log.info("[createZipArchive] 开始打包 taskId {} zipPath {} sourceType {}", task.getTaskId(), zipPath, task.getSourceType());
 
-        var folderName = zipFileName.replace(".zip", "") + "/";
-        try (var zos = new ZipOutputStream(Files.newOutputStream(zipPath))) {
-            if (Files.exists(outputPath)) {
-                zos.putNextEntry(new ZipEntry(folderName + task.getFileName()));
-                Files.copy(outputPath, zos);
-                zos.closeEntry();
+        if (isStringsSource(task)) {
+            createStringsZipArchive(task, outputPath, zipPath);
+        } else {
+            var folderName = zipFileName.replace(".zip", "") + "/";
+            try (var zos = new ZipOutputStream(Files.newOutputStream(zipPath))) {
+                if (Files.exists(outputPath)) {
+                    zos.putNextEntry(new ZipEntry(folderName + task.getFileName()));
+                    Files.copy(outputPath, zos);
+                    zos.closeEntry();
+                }
             }
         }
 
         log.info("[createZipArchive] 打包完成 taskId {} zipPath {}", task.getTaskId(), zipPath);
         return zipPath;
+    }
+
+    /**
+     * strings 模式打包：将输出目录下的三个 Strings 文件放入小写 strings/ 子目录
+     * 用户解压到游戏 Data 目录后，strings/ 下的文件即可被游戏加载
+     *
+     * @param task       翻译任务实体
+     * @param outputDir  翻译输出目录（含三个 Strings 文件）
+     * @param zipPath    目标 zip 路径
+     * @throws IOException 打包失败时抛出
+     */
+    private void createStringsZipArchive(TranslationTask task, Path outputDir, Path zipPath) throws IOException {
+        if (!Files.isDirectory(outputDir)) {
+            log.error("[createStringsZipArchive] 输出目录不存在 taskId {} outputDir {}", task.getTaskId(), outputDir);
+            throw new IOException("strings 输出目录不存在 " + outputDir);
+        }
+        try (var zos = new ZipOutputStream(Files.newOutputStream(zipPath));
+             var files = Files.list(outputDir)) {
+            var sorted = files.filter(Files::isRegularFile)
+                    .sorted()
+                    .collect(Collectors.toList());
+            for (var file : sorted) {
+                zos.putNextEntry(new ZipEntry(STRINGS_ZIP_FOLDER + file.getFileName()));
+                Files.copy(file, zos);
+                zos.closeEntry();
+            }
+        }
     }
 
     /**
@@ -532,13 +581,41 @@ public class TaskService {
             return;
         }
         try {
-            var deleted = Files.deleteIfExists(Path.of(filePath));
+            var deleted = deletePathRecursively(Path.of(filePath));
             if (deleted) {
                 log.info("[deleteFileQuietly] 文件已删除 taskId {} filePath {}", taskId, filePath);
             }
         } catch (IOException e) {
             log.warn("[deleteFileQuietly] 文件删除失败 taskId {} filePath {}", taskId, filePath, e);
         }
+    }
+
+    /**
+     * 删除文件或目录（目录递归删除），返回是否删除了内容
+     * strings 模式下 filePath/outputFilePath 为目录，需要递归删除
+     *
+     * @param path 待删除路径
+     * @return 是否存在并删除
+     * @throws IOException 遍历目录异常
+     */
+    private boolean deletePathRecursively(Path path) throws IOException {
+        if (!Files.exists(path)) {
+            return false;
+        }
+        if (Files.isDirectory(path)) {
+            try (var walk = Files.walk(path)) {
+                walk.sorted(Comparator.reverseOrder())
+                        .forEach(p -> {
+                            try {
+                                Files.deleteIfExists(p);
+                            } catch (IOException e) {
+                                log.warn("[deletePathRecursively] 删除失败 path {}", p, e);
+                            }
+                        });
+            }
+            return true;
+        }
+        return Files.deleteIfExists(path);
     }
 
     /**
@@ -638,7 +715,7 @@ public class TaskService {
             return false;
         }
         try {
-            return Files.deleteIfExists(Path.of(filePath));
+            return deletePathRecursively(Path.of(filePath));
         } catch (IOException e) {
             log.warn("[deleteFileIfExists] 文件删除失败 filePath {}", filePath, e);
             return false;
@@ -818,9 +895,8 @@ public class TaskService {
             return;
         }
         try {
-            var path = Paths.get(filePath);
-            if (Files.exists(path)) {
-                Files.delete(path);
+            var deleted = deletePathRecursively(Paths.get(filePath));
+            if (deleted) {
                 log.info("[deleteLocalFile] 本地文件已删除 taskId {} path {}", taskId, filePath);
             }
         } catch (Exception e) {

@@ -47,7 +47,8 @@ public interface EngineClient {
             Boolean skipCache,
             String llmBaseUrl,
             String llmApiKey,
-            String llmModel
+            String llmModel,
+            String sourceType
     ) {}
 
     record DictionaryEntryDto(
@@ -78,7 +79,8 @@ public interface EngineClient {
             String taskId,
             String filePath,
             List<AssemblyItem> items,
-            String callbackUrl
+            String callbackUrl,
+            String sourceType
     ) {}
 
     record AssemblyItem(
