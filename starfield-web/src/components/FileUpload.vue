@@ -512,7 +512,7 @@ async function handleUpload(options: UploadRequestOptions) {
       </div>
       <div v-else class="upload-placeholder">
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
-        <p class="upload-text">点击选择包含 Strings 文件的文件夹</p>
+        <p class="upload-text">点击选择包含 strings 文件的文件夹</p>
         <p class="upload-hint">需包含 .strings / .dlstrings / .ilstrings 三个文件，且以 _zhhans 结尾</p>
       </div>
     </div>

@@ -367,12 +367,13 @@ def parse_esm(file_path: str) -> list[StringRecord]:
         logger.warning("[parse_esm] 文件头部不是 TES4 file_path %s header %s", file_path, header_type.decode("ascii", errors="replace"))
         return []
 
-    # 检测本地化标志：开启本地化的 ESM 文本存储在外部 Strings 文件中，当前不支持
+    # 检测本地化标志：开启本地化的 ESM 文本存储在外部 Strings 文件中，需改用「本地化 mod」上传方式
     header_flags = struct.unpack_from("<I", data, 8)[0]
     if header_flags & LOCALIZED_FLAG:
+        logger.warning("[parse_esm] ESM 开启了本地化 需改用 Strings 文件夹上传 file_path %s", file_path)
         raise ValueError(
-            f"该 ESM 文件开启了本地化（Localized），文本存储在外部 Strings 文件中，暂不支持翻译。"
-            f" file_path={file_path}"
+            "esm 开启了本地化（Localized），文本已移到外部 strings 文件，无法直接翻译 esm。"
+            "请将上传方式切换为「本地化 mod」，上传包含 .strings、.dlstrings、.ilstrings 三个文件的文件夹进行翻译。"
         )
 
     # 跳过 TES4 头部记录
@@ -413,10 +414,13 @@ def parse_esm_bytes(data: bytes) -> list[StringRecord]:
         logger.warning("[parse_esm_bytes] 数据头部不是 TES4 header %s", header_type.decode("ascii", errors="replace"))
         return []
 
-    # 检测本地化标志
+    # 检测本地化标志：需改用「本地化 mod」上传方式
     header_flags = struct.unpack_from("<I", data, 8)[0]
     if header_flags & LOCALIZED_FLAG:
-        raise ValueError("该 ESM 数据开启了本地化（Localized），文本存储在外部 Strings 文件中，暂不支持翻译。")
+        raise ValueError(
+            "esm 开启了本地化（Localized），文本已移到外部 strings 文件，无法直接翻译 esm。"
+            "请将上传方式切换为「本地化 mod」，上传包含 .strings、.dlstrings、.ilstrings 三个文件的文件夹进行翻译。"
+        )
 
     header_data_size = struct.unpack_from("<I", data, 4)[0]
     first_record_offset = RECORD_HEADER_SIZE + header_data_size
