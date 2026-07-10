@@ -47,7 +47,7 @@ COS 上存储的是 `{taskId}.zip`（或关联 creation 时以作品名命名）
 |------|------|---------|
 | 原始目录 | `./uploads/{taskId}/`（含 .strings/.dlstrings/.ilstrings 三个文件） | 用户上传、解压校验后 |
 | 翻译目录 | `./uploads/{taskId}_translated/`（三个同名文件） | Engine 翻译完成后（仅 direct 模式） |
-| ZIP 包 | `./uploads/{baseName}.zip`（内含小写 `strings/` 子目录） | 上传 COS 前打包 |
+| ZIP 包 | `./uploads/{taskId}.zip`（内含小写 `strings/` 子目录） | 上传 COS 前打包 |
 
 strings 模式无 backup 文件。`file_path` 与 `output_file_path` 均为目录，清理时递归删除整个目录。
 

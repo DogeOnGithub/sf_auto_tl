@@ -344,7 +344,8 @@ class TaskServiceTest {
 
         var zipPath = taskService.createZipArchive(task);
 
-        assertThat(zipPath.getFileName().toString()).isEqualTo("MyMod.zip");
+        // 物理临时 zip 以 taskId 命名（展示名/下载名仍由 COS 侧单独使用 getZipFileName 决定）
+        assertThat(zipPath.getFileName().toString()).isEqualTo("task-zip.zip");
         assertThat(Files.exists(zipPath)).isTrue();
         assertThat(Files.size(zipPath)).isGreaterThan(0);
     }

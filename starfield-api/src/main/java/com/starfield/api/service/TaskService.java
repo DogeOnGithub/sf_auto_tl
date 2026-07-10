@@ -491,9 +491,10 @@ public class TaskService {
     Path createZipArchive(TranslationTask task) throws IOException {
         var outputPath = Path.of(task.getOutputFilePath());
         var zipFileName = getZipFileName(task);
-        var zipPath = outputPath.getParent().resolve(zipFileName);
+        // 物理临时 zip 用 taskId 命名 避免同名 mod 并发打包时本地路径碰撞 展示名 zipFileName 仍用于内部文件夹与 COS 下载名
+        var zipPath = outputPath.getParent().resolve(task.getTaskId() + ".zip");
 
-        log.info("[createZipArchive] 开始打包 taskId {} zipPath {} sourceType {}", task.getTaskId(), zipPath, task.getSourceType());
+        log.info("[createZipArchive] 开始打包 taskId {} zipPath {} zipFileName {} sourceType {}", task.getTaskId(), zipPath, zipFileName, task.getSourceType());
 
         if (isStringsSource(task)) {
             createStringsZipArchive(task, outputPath, zipPath);
@@ -553,21 +554,12 @@ public class TaskService {
         deleteFileQuietly(task.getOutputFilePath(), task.getTaskId());
         deleteFileQuietly(task.getOriginalBackupPath(), task.getTaskId());
 
-        // 兜底：output/backup 路径可能为 null（如同步失败强制置为 failed 时），根据 filePath 反推 translated/backup 路径删除
-        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
-            var basePath = task.getFilePath();
-            var dotIdx = basePath.lastIndexOf('.');
-            if (dotIdx > 0) {
-                var name = basePath.substring(0, dotIdx);
-                var ext = basePath.substring(dotIdx);
-                deleteFileQuietly(name + "_translated" + ext, task.getTaskId());
-                deleteFileQuietly(name + "_backup" + ext, task.getTaskId());
-            }
-        }
-
         if (Objects.nonNull(zipPath)) {
             deleteFileQuietly(zipPath.toString(), task.getTaskId());
         }
+
+        // 兜底：按 taskId 前缀清理 uploads 目录残留（覆盖 output/backup 为 null 的情况 兼容 strings 目录）
+        deleteByTaskPrefix(task.getTaskId());
     }
 
     /**
@@ -616,6 +608,49 @@ public class TaskService {
             return true;
         }
         return Files.deleteIfExists(path);
+    }
+
+    /**
+     * 按 taskId 前缀清理 uploads 目录下的全部任务产物 兼容 esm 与 strings 两种命名
+     * 所有产物均以 taskId 前缀命名（{taskId}.esm、{taskId}_translated.esm、{taskId}_backup.esm、{taskId}.zip
+     * 以及 strings 模式的 {taskId}/ 与 {taskId}_translated/ 目录）
+     * 遍历删除可覆盖 DB 字段缺失（如同步失败强制置 failed 时 output/backup 为 null）导致的残留
+     *
+     * @param taskId 任务 ID
+     * @return 删除的顶层文件或目录数量
+     */
+    private int deleteByTaskPrefix(String taskId) {
+        if (Objects.isNull(taskId) || taskId.isBlank()) {
+            log.warn("[deleteByTaskPrefix] taskId 为空 跳过前缀清理");
+            return 0;
+        }
+        if (Objects.isNull(uploadDir) || uploadDir.isBlank()) {
+            log.warn("[deleteByTaskPrefix] uploadDir 未配置 跳过前缀清理 taskId {}", taskId);
+            return 0;
+        }
+        var uploadPath = Paths.get(uploadDir);
+        if (!Files.isDirectory(uploadPath)) {
+            return 0;
+        }
+        var count = 0;
+        try (var stream = Files.list(uploadPath)) {
+            var matched = stream
+                    .filter(p -> p.getFileName().toString().startsWith(taskId))
+                    .collect(Collectors.toList());
+            for (var p : matched) {
+                try {
+                    if (deletePathRecursively(p)) {
+                        count++;
+                        log.info("[deleteByTaskPrefix] 已删除残留 taskId {} path {}", taskId, p);
+                    }
+                } catch (IOException e) {
+                    log.warn("[deleteByTaskPrefix] 删除失败 taskId {} path {}", taskId, p, e);
+                }
+            }
+        } catch (IOException e) {
+            log.warn("[deleteByTaskPrefix] 遍历 uploads 目录失败 taskId {}", taskId, e);
+        }
+        return count;
     }
 
     /**
@@ -693,17 +728,8 @@ public class TaskService {
         if (deleteFileIfExists(task.getOutputFilePath())) count++;
         if (deleteFileIfExists(task.getOriginalBackupPath())) count++;
 
-        // 兜底：output/backup 路径可能为 null，根据 filePath 反推 translated/backup 路径删除
-        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
-            var basePath = task.getFilePath();
-            var dotIdx = basePath.lastIndexOf('.');
-            if (dotIdx > 0) {
-                var name = basePath.substring(0, dotIdx);
-                var ext = basePath.substring(dotIdx);
-                if (deleteFileIfExists(name + "_translated" + ext)) count++;
-                if (deleteFileIfExists(name + "_backup" + ext)) count++;
-            }
-        }
+        // 兜底：按 taskId 前缀清理 uploads 目录残留（覆盖 output/backup 为 null 的情况 兼容 strings 目录）
+        count += deleteByTaskPrefix(task.getTaskId());
         return count;
     }
 
@@ -774,17 +800,8 @@ public class TaskService {
         deleteLocalFile(task.getOutputFilePath(), taskId);
         deleteLocalFile(task.getOriginalBackupPath(), taskId);
 
-        // 兜底：根据 filePath 推算 translated 和 backup 路径并尝试删除（防止 DB 字段为 null 时残留）
-        if (Objects.nonNull(task.getFilePath()) && !task.getFilePath().isBlank()) {
-            var basePath = task.getFilePath();
-            var dotIdx = basePath.lastIndexOf('.');
-            if (dotIdx > 0) {
-                var name = basePath.substring(0, dotIdx);
-                var ext = basePath.substring(dotIdx);
-                deleteLocalFile(name + "_translated" + ext, taskId);
-                deleteLocalFile(name + "_backup" + ext, taskId);
-            }
-        }
+        // 兜底：按 taskId 前缀清理 uploads 目录残留（防止 DB 字段为 null 时残留 兼容 strings 目录）
+        deleteByTaskPrefix(taskId);
 
         // 清理确认记录
         try {
