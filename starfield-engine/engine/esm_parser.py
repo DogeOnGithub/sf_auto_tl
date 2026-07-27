@@ -23,6 +23,7 @@ NON_TRANSLATABLE_OVERRIDES = frozenset({
     (b"SMQN", b"NNAM"),   # Story Manager Quest Node 二进制数据
     (b"FURN", b"NNAM"),   # 家具二进制数据（非文本）
     (b"RSPJ", b"RNAM"),   # 研究项目前置依赖 FormID 引用（4 字节二进制）
+    (b"PERK", b"RNAM"),   # Perk 打包二进制数据（非文本），误当文本翻译会双重编码撑大字节破坏 perk
 })
 
 # 包含 Object Template 的记录类型
