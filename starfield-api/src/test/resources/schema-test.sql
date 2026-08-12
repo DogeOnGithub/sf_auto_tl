@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS translation_task (
     download_url         VARCHAR(1000),
     creation_version_id  BIGINT,
     sync_fail_count      INT          NOT NULL DEFAULT 0,
+    failed_reason        TEXT,
     confirmation_mode    VARCHAR(20)  NOT NULL DEFAULT 'direct',
     created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -9,6 +9,7 @@ import pytest
 
 from engine.esm_parser import StringRecord
 from engine.esm_writer import WriteResult
+from engine.llm_client import DEFAULT_MAX_BATCH_RECORDS
 from engine.translator import (
     STATUS_ASSEMBLING,
     STATUS_COMPLETED,
@@ -184,3 +185,49 @@ class TestTranslatorParameterPassing:
         assert call_kwargs["custom_prompt"] == custom
         assert call_kwargs["dictionary_entries"] == entries
         assert callable(call_kwargs["on_batch_done"])
+
+
+class TestGlossaryTrigger:
+    """术语提取触发条件测试。
+
+    阈值按批次数而不是词条数表达：只要需要分批就存在同一专有名词在不同批次
+    被译成不同名字的风险。用词条数写死过一次，结果批次上限调小后，一个 499 词条
+    的 mod 被切成 7 批却仍然拿不到术语表。
+    """
+
+    @staticmethod
+    def _run(record_count: int):
+        """跑一个指定词条数的任务 返回 extract_glossary 的 mock。
+
+        Args:
+            record_count: 待翻译词条数。
+
+        Returns:
+            extract_glossary 的 mock 对象 可用 called 判断是否触发提取。
+        """
+        records = _make_records(record_count)
+        with patch("engine.translator.parse_esm", return_value=records), \
+                patch("engine.translator.query_cache", return_value={}), \
+                patch("engine.translator.save_cache"), \
+                patch("engine.translator.write_esm",
+                      return_value=WriteResult(backup_path="/tmp/b.esm", output_path="/tmp/o.esm")), \
+                patch("engine.translator.translate_records",
+                      return_value={r.record_id: "译文" for r in records}), \
+                patch("engine.translator.extract_glossary", return_value=[]) as mock_extract:
+            t = Translator()
+            t.submit_task("task-glossary", "/tmp/test.esm")
+            for _ in range(100):
+                task = t.get_task("task-glossary")
+                if task and task["status"] in {STATUS_COMPLETED, STATUS_FAILED}:
+                    break
+                time.sleep(0.02)
+            assert t.get_task("task-glossary")["status"] == STATUS_COMPLETED
+            return mock_extract
+
+    def test_single_batch_skips_extraction(self):
+        """单批次时 LLM 一次看到全部文本 译名天然一致 不需要额外花一次调用提取。"""
+        assert self._run(DEFAULT_MAX_BATCH_RECORDS).called is False
+
+    def test_multi_batch_triggers_extraction(self):
+        """超出单批上限一条就会分批 此时必须提取术语表兜住跨批译名一致性。"""
+        assert self._run(DEFAULT_MAX_BATCH_RECORDS + 1).called is True

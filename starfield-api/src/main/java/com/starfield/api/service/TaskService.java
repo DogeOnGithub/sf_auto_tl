@@ -3,6 +3,7 @@ package com.starfield.api.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.client.EngineClient;
+import com.starfield.api.client.EngineTaskNotFoundException;
 import com.starfield.api.config.CosProperties;
 import com.starfield.api.dto.ConfirmationSaveItem;
 import com.starfield.api.dto.ProgressCallbackRequest;
@@ -55,11 +56,50 @@ public class TaskService {
     @Value("${storage.upload-dir:./uploads}")
     private String uploadDir;
 
+    /** 引擎进度轮询间隔（毫秒）与 TaskProgressScheduler 的 fixedDelay 同源配置 */
+    @Value("${engine.sync.interval-ms:30000}")
+    private long syncIntervalMs = DEFAULT_SYNC_INTERVAL_MS;
+
+    /** 判定任务失败所需的连续同步失败时长（分钟） */
+    @Value("${engine.sync.fail-tolerance-minutes:30}")
+    private int syncFailToleranceMinutes = DEFAULT_SYNC_FAIL_TOLERANCE_MINUTES;
+
     /** uploads 目录大小阈值 20GB */
     private static final long UPLOAD_DIR_SIZE_THRESHOLD = 20L * 1024 * 1024 * 1024;
 
     /** 任务过期天数 */
     private static final int TASK_EXPIRATION_DAYS = 5;
+
+    /** 轮询间隔默认值（毫秒）与 application.yml 的 engine.sync.interval-ms 一致 */
+    private static final long DEFAULT_SYNC_INTERVAL_MS = 30_000L;
+
+    /** 同步失败容忍时长默认值（分钟）与 application.yml 的 engine.sync.fail-tolerance-minutes 一致 */
+    private static final int DEFAULT_SYNC_FAIL_TOLERANCE_MINUTES = 30;
+
+    /**
+     * 失败原因：连续同步失败被判死
+     * <p>这类失败是推测性的 引擎线程可能仍在运行 因此允许被后到的 completed 回调复活
+     * 本地文件也要延后回收
+     */
+    static final String FAILED_REASON_SYNC_TIMEOUT = "sync_timeout";
+
+    /** 失败原因：引擎中已无该任务的状态（引擎重启或未提交成功）属确定性失败 */
+    static final String FAILED_REASON_ENGINE_LOST = "engine_lost";
+
+    /**
+     * 任务创建后允许出现 404 的宽限窗口 以轮询间隔的倍数表示
+     * <p>任务先入库再提交给引擎 这中间有个很短的窗口会查到 404 不能据此把刚提交的任务打死
+     */
+    private static final int ENGINE_REGISTER_GRACE_INTERVALS = 2;
+
+    /**
+     * sync_timeout 失败任务的本地文件保留时长（小时）
+     * <p>超过这个时长引擎不可能还在跑 才允许被 cleanupUploadsIfOversized 回收
+     */
+    private static final int SYNC_TIMEOUT_FILE_RETENTION_HOURS = 6;
+
+    /** 人工确认模式标识 */
+    private static final String CONFIRMATION_MODE = "confirmation";
 
     /** Strings 来源类型标识 */
     private static final String SOURCE_TYPE_STRINGS = "strings";
@@ -186,6 +226,43 @@ public class TaskService {
     }
 
     /**
+     * 判断已处于终态的任务是否应丢弃这次回调
+     * <p>唯一放行的例外：direct 模式下被「同步超时」推测判死的任务（failed_reason = sync_timeout），
+     * 而引擎最终真的把它翻完了并回调 completed。这种失败本来就只是推测——引擎线程可能一直活着，
+     * 译文文件也还躺在磁盘上，把任务复活去打包上传比让用户对着一个失败任务干等更合理。
+     * <p>confirmation 模式刻意不复活：这类任务的产出是 translation_confirmation 里的确认记录，
+     * 而判死时那批记录已经被清掉了，复活成 pending_confirmation 只会得到一个空的确认列表，
+     * 比明确失败更让人困惑。要支持这种模式的复活，得先把确认记录的回收也改成延后，
+     * 但目前没有任何定时任务会回收 failed 任务的确认记录，改了就会漏行，所以留作后续。
+     * <p>其他终态（引擎明确报 failed、已 completed、已进入待确认）一律丢弃 避免状态回退。
+     *
+     * @param task      数据库中的任务
+     * @param newStatus 回调携带的新状态
+     * @return 应丢弃返回 true
+     */
+    private boolean shouldDropTerminalCallback(TranslationTask task, TaskStatus newStatus) {
+        var status = task.getStatus();
+        if (status != TaskStatus.completed && status != TaskStatus.failed && status != TaskStatus.pending_confirmation) {
+            return false;
+        }
+        var revivable = status == TaskStatus.failed
+                && FAILED_REASON_SYNC_TIMEOUT.equals(task.getFailedReason())
+                && newStatus == TaskStatus.completed
+                && !isConfirmationMode(task);
+        return !revivable;
+    }
+
+    /**
+     * 判断任务是否为 confirmation（人工确认）模式
+     *
+     * @param task 翻译任务
+     * @return 是 confirmation 模式返回 true
+     */
+    private boolean isConfirmationMode(TranslationTask task) {
+        return CONFIRMATION_MODE.equals(task.getConfirmationMode());
+    }
+
+    /**
      * 处理 Engine 的进度回调 更新数据库中的任务状态和进度
      *
      * @param taskId  任务 ID
@@ -200,14 +277,30 @@ public class TaskService {
             return;
         }
 
+        TaskStatus newStatus;
+        try {
+            newStatus = TaskStatus.valueOf(request.status());
+        } catch (IllegalArgumentException e) {
+            log.warn("[handleProgressCallback] 回调状态无法识别 跳过 taskId {} status {}", taskId, request.status());
+            return;
+        }
+
         var currentStatus = task.getStatus();
-        if (currentStatus == TaskStatus.completed || currentStatus == TaskStatus.failed || currentStatus == TaskStatus.pending_confirmation) {
+        if (shouldDropTerminalCallback(task, newStatus)) {
             log.info("[handleProgressCallback] 任务已终态 跳过 taskId {} status {}", taskId, currentStatus);
             return;
         }
 
-        var newStatus = TaskStatus.valueOf(request.status());
-        var isConfirmationMode = "confirmation".equals(task.getConfirmationMode());
+        // 走到这里且当前是 failed 只可能是 sync_timeout 复活场景（其他 failed 都被上面拦掉了）
+        // 失败标记要清掉 否则任务完成后仍挂着「引擎连续同步失败」的错误信息
+        if (currentStatus == TaskStatus.failed) {
+            log.warn("[handleProgressCallback] 同步超时判死的任务收到引擎回调 复活 taskId {} newStatus {}", taskId, newStatus);
+            task.setFailedReason(null);
+            // errorMessage 的更新策略是 NOT_NULL 置 null 写不进库 这里改写成可追溯的说明
+            task.setErrorMessage("此前曾因引擎同步超时被误判为失败 引擎恢复后任务已正常完成");
+        }
+
+        var isConfirmationMode = isConfirmationMode(task);
 
         // confirmation 模式下 收到 items 时增量写入 translation_confirmation 表
         if (isConfirmationMode && Objects.nonNull(request.items()) && !request.items().isEmpty()) {
@@ -353,11 +446,34 @@ public class TaskService {
         activeTasks.forEach(this::syncProgressFromEngine);
     }
 
-    private static final int MAX_SYNC_FAIL_COUNT = 10;
+    /**
+     * 计算判定任务失败所需的连续同步失败次数
+     * <p>用次数换算时长而不是比对 updated_at：sync_fail_count 每轮询一次加一、任何一次成功
+     * 同步或回调都会清零 所以 count × 轮询间隔就是连续失联时长。活跃任务多导致单轮耗时
+     * 超过一个间隔时 实际容忍时长只会更长 偏保守 不会误杀。
+     *
+     * @return 失败次数阈值 最小为 1
+     */
+    private int maxSyncFailCount() {
+        var count = (int) (syncFailToleranceMinutes * 60_000L / effectiveSyncIntervalMs());
+        return Math.max(count, 1);
+    }
 
     /**
-     * 尝试从翻译引擎同步最新进度，引擎不可用时使用数据库状态
-     * 连续同步失败超过阈值时标记任务为失败
+     * 取生效的轮询间隔 配置缺失或非法时回退默认值
+     * <p>单元测试里 @Value 不会被注入 这里保证不会算出除零或负数阈值
+     *
+     * @return 轮询间隔（毫秒）
+     */
+    private long effectiveSyncIntervalMs() {
+        return syncIntervalMs > 0 ? syncIntervalMs : DEFAULT_SYNC_INTERVAL_MS;
+    }
+
+    /**
+     * 尝试从翻译引擎同步最新进度
+     * <p>三种异常情况分开处置：引擎明确说没有这个任务（404）说明引擎重启过、任务已不可能恢复；
+     * 超时或连不上只说明引擎忙 任务可能还活着 要保守等待；任务刚创建还没在引擎注册完成时
+     * 处于宽限期 也按「等待」处理。
      *
      * @param task 翻译任务实体
      */
@@ -370,6 +486,7 @@ public class TaskService {
         try {
             var engineStatus = engineClient.getTaskStatus(task.getTaskId());
             if (Objects.isNull(engineStatus)) {
+                log.warn("[syncProgressFromEngine] 引擎返回空状态 taskId {}", task.getTaskId());
                 incrementSyncFailCount(task);
                 return;
             }
@@ -410,9 +527,11 @@ public class TaskService {
                 cleanupConfirmationRecords(task.getTaskId());
             }
 
-            // 同步成功，重置失败计数
+            // 同步成功 说明引擎存活 重置失败计数
             task.setSyncFailCount(0);
             translationTaskRepository.updateById(task);
+        } catch (EngineTaskNotFoundException e) {
+            handleEngineTaskLost(task);
         } catch (Exception e) {
             log.warn("[syncProgressFromEngine] 引擎同步失败 使用数据库状态 taskId {}", task.getTaskId(), e);
             incrementSyncFailCount(task);
@@ -420,20 +539,82 @@ public class TaskService {
     }
 
     /**
-     * 累加同步失败计数，超过阈值则标记任务为失败
+     * 处理引擎侧已查不到该任务的情况
+     * <p>引擎的任务态只存在单 worker 的进程内存里，404 是确定性结论：引擎重启过（或这个任务
+     * 当初就没提交成功），承载它的翻译线程已经死亡，既不会再产出结果也不会再回调。既然确定
+     * 没有进程在读写这些文件，就可以立刻判死并回收磁盘，不必像同步超时那样保守保留。
+     * <p>但任务刚创建、还在「已入库尚未在引擎注册完成」的窗口内时也会拿到 404，这段时间
+     * 按普通失败计数处理，避免把刚提交的任务瞬间打死。
+     *
+     * @param task 翻译任务实体
+     */
+    private void handleEngineTaskLost(TranslationTask task) {
+        if (isWithinEngineRegisterGrace(task)) {
+            log.warn("[handleEngineTaskLost] 任务尚在引擎注册宽限期内 暂不判死 taskId {} createdAt {}",
+                    task.getTaskId(), task.getCreatedAt());
+            incrementSyncFailCount(task);
+            return;
+        }
+
+        log.error("[handleEngineTaskLost] 引擎中已无该任务 立即判定失败 taskId {} status {}",
+                task.getTaskId(), task.getStatus());
+        task.setStatus(TaskStatus.failed);
+        task.setFailedReason(FAILED_REASON_ENGINE_LOST);
+        task.setErrorMessage("引擎中已无该任务的状态（引擎重启或任务未提交成功）请重新提交");
+
+        // 引擎线程确定已死 不存在「删了文件把正在跑的任务搞崩」的风险 直接回收
+        handleTaskFailed(task);
+        cleanupConfirmationRecords(task.getTaskId());
+        translationTaskRepository.updateById(task);
+    }
+
+    /**
+     * 判断任务是否还处于「刚创建、引擎可能尚未注册」的宽限期内
+     *
+     * @param task 翻译任务实体
+     * @return 处于宽限期返回 true
+     */
+    private boolean isWithinEngineRegisterGrace(TranslationTask task) {
+        var createdAt = task.getCreatedAt();
+        if (Objects.isNull(createdAt)) {
+            log.warn("[isWithinEngineRegisterGrace] 任务无创建时间 按已过宽限期处理 taskId {}", task.getTaskId());
+            return false;
+        }
+        var graceSeconds = ENGINE_REGISTER_GRACE_INTERVALS * effectiveSyncIntervalMs() / 1000;
+        return createdAt.isAfter(LocalDateTime.now().minusSeconds(graceSeconds));
+    }
+
+    /**
+     * 累加同步失败计数，连续失联时长超过容忍阈值时标记任务为失败
+     * <p>失败一次只说明「这一轮没拿到状态」，不说明引擎死了：引擎可能正在解析大文件、
+     * 正在等一次 LLM 响应。任何一次成功同步或回调都会把计数清零，所以只有真正连续
+     * 失联到容忍时长才会判死。
+     *
+     * @param task 翻译任务实体
      */
     private void incrementSyncFailCount(TranslationTask task) {
         var count = Objects.nonNull(task.getSyncFailCount()) ? task.getSyncFailCount() : 0;
         count++;
         task.setSyncFailCount(count);
-        if (count >= MAX_SYNC_FAIL_COUNT) {
-            log.error("[incrementSyncFailCount] 同步失败次数超过阈值 标记任务失败 taskId {} count {}", task.getTaskId(), count);
-            task.setStatus(TaskStatus.failed);
-            task.setErrorMessage("引擎同步失败次数超过 " + MAX_SYNC_FAIL_COUNT + " 次");
-            // 强制置为 failed 时同步清理本地文件和确认记录 与其他 failed 路径保持一致 避免文件泄漏
-            handleTaskFailed(task);
-            cleanupConfirmationRecords(task.getTaskId());
+
+        var threshold = maxSyncFailCount();
+        if (count < threshold) {
+            translationTaskRepository.updateById(task);
+            return;
         }
+
+        log.error("[incrementSyncFailCount] 连续同步失败超过容忍时长 标记任务失败 taskId {} count {} toleranceMinutes {}",
+                task.getTaskId(), count, syncFailToleranceMinutes);
+        task.setStatus(TaskStatus.failed);
+        task.setFailedReason(FAILED_REASON_SYNC_TIMEOUT);
+        task.setErrorMessage("引擎连续同步失败 " + count + " 次（约 " + syncFailToleranceMinutes + " 分钟）");
+
+        // 这里刻意不删本地文件：本路径只代表「API 联系不上引擎」，引擎线程可能仍在翻译或正在重组，
+        // 删掉源文件会让引擎在 write_esm 阶段直接崩掉（线上已出现过 No such file or directory），
+        // 把一个还有产出的任务变成彻底报废。这也是为什么这类失败要打上 sync_timeout 标记：
+        // 引擎最终真的翻完并回调时任务能被复活（见 handleProgressCallback），
+        // 磁盘则由 cleanupUploadsIfOversized 在失败足够久之后再回收。
+        cleanupConfirmationRecords(task.getTaskId());
         translationTaskRepository.updateById(task);
     }
 
@@ -696,8 +877,15 @@ public class TaskService {
             var completedTasks = translationTaskRepository.selectList(completedWrapper);
 
             // 查询已失败的任务
+            // sync_timeout 是推测性失败 引擎线程可能仍在读写这些文件 立刻删掉会让引擎在回写阶段
+            // 崩在 No such file or directory 上 把一个还有产出的任务彻底报废
+            // 因此这类任务的文件要等到失败超过 SYNC_TIMEOUT_FILE_RETENTION_HOURS 小时后才回收
+            var syncTimeoutCutoff = LocalDateTime.now().minusHours(SYNC_TIMEOUT_FILE_RETENTION_HOURS);
             var failedWrapper = new QueryWrapper<TranslationTask>()
-                    .eq("status", TaskStatus.failed.name());
+                    .eq("status", TaskStatus.failed.name())
+                    .and(w -> w.isNull("failed_reason")
+                            .or().ne("failed_reason", FAILED_REASON_SYNC_TIMEOUT)
+                            .or().lt("updated_at", syncTimeoutCutoff));
             var failedTasks = translationTaskRepository.selectList(failedWrapper);
 
             var cleanedCount = 0;

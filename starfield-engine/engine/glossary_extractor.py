@@ -5,16 +5,36 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import re
 import time
 from typing import Optional
 
-from openai import OpenAI
+from openai import BadRequestError
 
 from engine.esm_parser import StringRecord
+# 复用 llm_client 的客户端构造、超时与可选参数 保持整个引擎对 LLM 的约束口径一致
+from engine.llm_client import (
+    REQUEST_TIMEOUT,
+    _completion_kwargs,
+    _env_int,
+    _get_client,
+    _get_model,
+)
 
 logger = logging.getLogger(__name__)
+
+# 术语表返回条数上限
+# 术语表最终会被合并进词典并按批过滤下发 一个 Mod 有一两百条专有名词已经足够；
+# 不设上限时模型可能吐出上千条 输出必然被截断 而截断的 JSON 解析必然失败 等于白花钱
+MAX_GLOSSARY_TERMS = _env_int("LLM_GLOSSARY_MAX_TERMS", 150)
+
+# 术语提取的采样字符数上限
+# 原来是 200000 字符 约 5 万 input token 在 32k 上下文的模型上直接超限 且单次调用很贵
+# 6 万字符约 1.5 万 input token 对绝大多数模型都安全 均匀采样下覆盖面依然够用
+DEFAULT_GLOSSARY_MAX_CHARS = _env_int("LLM_GLOSSARY_MAX_CHARS", 60000)
+
+# 采样缩减的下限 低于此值不再继续缩小 直接放弃本次提取
+MIN_GLOSSARY_MAX_CHARS = 5000
 
 
 def _build_extraction_prompt(texts: list[str], target_lang: str) -> str:
@@ -48,6 +68,7 @@ def _build_extraction_prompt(texts: list[str], target_lang: str) -> str:
         f"2. 每个专有名词只出现一次，不要重复\n"
         f"3. 以 JSON 数组格式返回，每个元素包含 sourceText（原文）和 targetText（翻译）\n"
         f"4. 不要添加任何额外解释或注释\n"
+        f"5. 最多返回 {MAX_GLOSSARY_TERMS} 条，超出时优先保留出现频率高、容易被误译的名词\n"
         f"\n"
         f"返回格式示例：\n"
         f'[\n'
@@ -202,12 +223,15 @@ RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
 def extract_glossary(
     records: list[StringRecord],
     target_lang: str = "zh-CN",
-    max_chars: int = 200000,
+    max_chars: int = DEFAULT_GLOSSARY_MAX_CHARS,
     llm_base_url: str | None = None,
     llm_api_key: str | None = None,
     llm_model: str | None = None,
 ) -> list[dict]:
     """从待翻译记录中提取专有名词术语表。
+
+    <p>响应被输出上限截断时会缩小采样重试：截断的 JSON 解析必然失败，
+    直接返回空术语表相当于这次调用白花钱，缩小一半采样再试一次更划算。
 
     Args:
         records: 待翻译的 StringRecord 列表。
@@ -246,15 +270,13 @@ def extract_glossary(
     # 2. 构建 Prompt
     prompt = _build_extraction_prompt(sampled_texts, target_lang)
 
-    # 3. 创建 OpenAI 客户端（复用 llm_client.py 的模式）
-    client = OpenAI(
-        api_key=llm_api_key or os.environ.get("LLM_API_KEY", ""),
-        base_url=llm_base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com"),
-    )
-    model = llm_model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+    # 3. 创建 OpenAI 客户端（直接复用 llm_client 的构造 含 base_url 规整与 max_retries=0）
+    client = _get_client(llm_base_url, llm_api_key)
+    model = _get_model(llm_model)
 
     # 4. 调用 LLM 提取术语（含重试逻辑）
     system_message = "You are a professional game localization terminology expert."
+    current_max_chars = max_chars
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -264,8 +286,29 @@ def extract_glossary(
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": prompt},
                 ],
+                timeout=REQUEST_TIMEOUT,
+                **_completion_kwargs(),
             )
-            response_text = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            response_text = choice.message.content or ""
+
+            # 4.5 输出被截断时缩小采样重试 截断的 JSON 解析必然失败
+            if getattr(choice, "finish_reason", None) == "length":
+                if current_max_chars // 2 >= MIN_GLOSSARY_MAX_CHARS:
+                    current_max_chars //= 2
+                    logger.warning(
+                        "[extract_glossary] 术语表被输出上限截断 缩小采样重试 new_max_chars %d attempt %d/%d",
+                        current_max_chars,
+                        attempt + 1,
+                        MAX_RETRIES,
+                    )
+                    sampled_texts = _sample_texts(records, current_max_chars)
+                    prompt = _build_extraction_prompt(sampled_texts, target_lang)
+                    continue
+                logger.warning(
+                    "[extract_glossary] 术语表仍被截断且采样已到下限 放弃提取 max_chars %d",
+                    current_max_chars,
+                )
 
             # 5. 解析术语表
             glossary = _parse_glossary_response(response_text)
@@ -276,6 +319,15 @@ def extract_glossary(
             )
 
             return glossary
+
+        except BadRequestError as e:
+            # 400 属参数或内容问题 重试不会变好 直接放弃 术语提取本身是可降级的
+            logger.warning(
+                "[extract_glossary] 请求被拒绝 不重试 返回空术语表 model %s error %s",
+                model,
+                str(e),
+            )
+            return []
 
         except Exception as e:
             if attempt < MAX_RETRIES - 1:

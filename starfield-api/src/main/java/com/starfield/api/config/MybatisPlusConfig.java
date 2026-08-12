@@ -45,10 +45,14 @@ public class MybatisPlusConfig {
 
         /**
          * 更新时自动填充 updatedAt
+         * <p>这里不能用 strictUpdateFill：它内部走 strictFillStrategy，只在字段值为 null 时才填充。
+         * 而更新场景下实体几乎都是 selectById 载入的，updatedAt 非空，导致「更新时刷新 updated_at」
+         * 这个能力从未真正生效——线上表现是编辑过的 Prompt 不会按更新时间排到列表最前，
+         * 任务卡片显示的「更新时间」实际是创建时间。改为无条件覆盖。
          */
         @Override
         public void updateFill(MetaObject metaObject) {
-            this.strictUpdateFill(metaObject, "updatedAt", LocalDateTime.class, LocalDateTime.now());
+            this.setFieldValByName("updatedAt", LocalDateTime.now(), metaObject);
         }
     }
 }

@@ -39,6 +39,13 @@ api:
 # 翻译引擎配置
 engine:
   base-url: ${ENGINE_BASE_URL:http://localhost:5001}
+  sync:
+    # 进度轮询间隔（毫秒）TaskProgressScheduler 和 TaskService 的失败阈值都由它推导
+    # 改这一个值即可 不要在代码里另写一份间隔常量
+    interval-ms: ${ENGINE_SYNC_INTERVAL_MS:30000}
+    # 连续同步失败多久才判定任务失败（分钟）
+    # 30 万词条的任务光解析或重组就可能好几分钟 期间引擎来不及响应轮询 阈值太短会误杀
+    fail-tolerance-minutes: ${ENGINE_SYNC_FAIL_TOLERANCE_MINUTES:30}
 
 # 文件存储配置
 storage:

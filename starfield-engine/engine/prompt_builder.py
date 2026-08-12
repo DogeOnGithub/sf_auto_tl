@@ -51,7 +51,8 @@ def build_prompt(
     Returns:
         组装后的完整 Prompt 字符串。
     """
-    logger.info(
+    # 每批调用两次 一个 32 万词条的任务会有数千批 用 DEBUG 避免刷屏
+    logger.debug(
         "[build_prompt] 开始构建 Prompt custom_prompt_set %s dict_entries_count %d texts_count %d",
         custom_prompt is not None and len(custom_prompt) > 0,
         len(dictionary_entries) if dictionary_entries else 0,
@@ -81,5 +82,5 @@ def build_prompt(
 
     prompt = "\n\n".join(parts)
 
-    logger.info("[build_prompt] Prompt 构建完成 total_length %d", len(prompt))
+    logger.debug("[build_prompt] Prompt 构建完成 total_length %d", len(prompt))
     return prompt

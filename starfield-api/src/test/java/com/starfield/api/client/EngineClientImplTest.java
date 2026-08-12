@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
@@ -127,6 +130,22 @@ class EngineClientImplTest {
 
         assertThat(result.status()).isEqualTo("completed");
         assertThat(result.outputFilePath()).isEqualTo("/output/mod_zh-CN.esm");
+    }
+
+    /**
+     * 404 必须抛 EngineTaskNotFoundException 而不是 EngineUnavailableException
+     * <p>上层据此区分「引擎重启、任务已死」和「引擎忙、任务还活着」两种完全不同的处置
+     */
+    @Test
+    void getTaskStatus_taskNotFound_throwsEngineTaskNotFoundException() {
+        when(restTemplate.getForObject(
+                eq(BASE_URL + "/engine/tasks/task-404"), eq(EngineClient.EngineTaskStatusResponse.class)
+        )).thenThrow(HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND, "Not Found", HttpHeaders.EMPTY, null, null));
+
+        assertThatThrownBy(() -> engineClient.getTaskStatus("task-404"))
+                .isInstanceOf(EngineTaskNotFoundException.class)
+                .hasMessageContaining("task-404");
     }
 
     @Test

@@ -105,8 +105,20 @@ npm run dev
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `LLM_API_KEY` | LLM API 密钥 | - |
-| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com` |
+| `LLM_BASE_URL` | LLM API 地址，只填到 `/v1` 这一层，不要带 `/chat/completions` | `https://api.deepseek.com` |
 | `LLM_MODEL` | LLM 模型名称 | `deepseek-v4-flash` |
+| `LLM_OUTPUT_TOKEN_BUDGET` | 单批输出 token 预算，批次字符上限按它反推 | `3200` |
+| `LLM_MAX_BATCH_CHARS` | 每批原文字符数上限 | `8000` |
+| `LLM_MAX_BATCH_RECORDS` | 每批词条数上限 | `80` |
+| `LLM_MAX_OUTPUT_TOKENS` | 单次响应输出 token 上限。留空即不下发该参数，由 provider 用自己的默认值；填超模型允许值会直接 400 | 不下发 |
+| `LLM_REQUEST_TIMEOUT` | 单次 LLM 请求超时（秒） | `300` |
+| `LLM_MAX_SPLIT_DEPTH` | 响应被截断时对半拆分重试的最大深度 | `4` |
+| `LLM_MAX_PROMPT_DICT_ENTRIES` | 单个 prompt 携带的词典条数上限（已按批过滤，这是兜底） | `200` |
+| `LLM_GLOSSARY_MAX_CHARS` | 术语提取的采样字符数上限 | `60000` |
+| `LLM_GLOSSARY_MAX_TERMS` | 术语表返回条数上限 | `150` |
+| `LOG_LEVEL` | 引擎日志级别，`INFO` 才能看到 token 用量汇总 | `WARNING`（compose 里设为 `INFO`） |
+| `ENGINE_SYNC_INTERVAL_MS` | API 轮询引擎进度的间隔（毫秒） | `30000` |
+| `ENGINE_SYNC_FAIL_TOLERANCE_MINUTES` | 连续同步失败多久判定任务失败（分钟） | `30` |
 | `COS_SECRET_ID` | 腾讯云 COS SecretId | - |
 | `COS_SECRET_KEY` | 腾讯云 COS SecretKey | - |
 | `COS_REGION` | COS 存储桶地域 | `ap-guangzhou` |

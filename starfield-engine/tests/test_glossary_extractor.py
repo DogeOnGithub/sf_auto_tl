@@ -269,8 +269,8 @@ class TestExtractGlossary:
         result = extract_glossary(records=[], target_lang="zh-CN")
         assert result == []
 
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_successful_extraction(self, mock_openai_cls):
+    @patch("engine.glossary_extractor._get_client")
+    def test_successful_extraction(self, mock_get_client):
         """成功提取术语表时应返回解析后的术语列表。"""
         # Mock LLM response
         mock_response = MagicMock()
@@ -282,7 +282,7 @@ class TestExtractGlossary:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Vasco joined Constellation.")]
         result = extract_glossary(records=records, target_lang="zh-CN")
@@ -291,18 +291,18 @@ class TestExtractGlossary:
         assert result[0]["sourceText"] == "Vasco"
         assert result[1]["sourceText"] == "Constellation"
 
-        # Verify OpenAI client was created
-        mock_openai_cls.assert_called_once()
+        # Verify LLM client was created
+        mock_get_client.assert_called_once()
         # Verify chat completions was called
         mock_client.chat.completions.create.assert_called_once()
 
     @patch("engine.glossary_extractor.time.sleep")
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_llm_failure_returns_empty(self, mock_openai_cls, mock_sleep):
+    @patch("engine.glossary_extractor._get_client")
+    def test_llm_failure_returns_empty(self, mock_get_client, mock_sleep):
         """LLM 调用失败时应返回空列表。"""
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API error")
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Some text")]
         result = extract_glossary(records=records, target_lang="zh-CN")
@@ -312,8 +312,8 @@ class TestExtractGlossary:
         assert mock_client.chat.completions.create.call_count == 3
 
     @patch("engine.glossary_extractor.time.sleep")
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_retry_succeeds_on_second_attempt(self, mock_openai_cls, mock_sleep):
+    @patch("engine.glossary_extractor._get_client")
+    def test_retry_succeeds_on_second_attempt(self, mock_get_client, mock_sleep):
         """第一次失败后重试成功应返回术语表。"""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -326,7 +326,7 @@ class TestExtractGlossary:
             Exception("Temporary error"),
             mock_response,
         ]
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Vasco is here")]
         result = extract_glossary(records=records, target_lang="zh-CN")
@@ -336,8 +336,8 @@ class TestExtractGlossary:
         assert mock_client.chat.completions.create.call_count == 2
         mock_sleep.assert_called_once_with(1)  # RETRY_DELAYS[0]
 
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_system_message_is_terminology_expert(self, mock_openai_cls):
+    @patch("engine.glossary_extractor._get_client")
+    def test_system_message_is_terminology_expert(self, mock_get_client):
         """系统消息应为术语专家角色。"""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -345,7 +345,7 @@ class TestExtractGlossary:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Test text")]
         extract_glossary(records=records, target_lang="zh-CN")
@@ -355,8 +355,8 @@ class TestExtractGlossary:
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == "You are a professional game localization terminology expert."
 
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_uses_env_defaults_when_no_params(self, mock_openai_cls):
+    @patch("engine.glossary_extractor._get_client")
+    def test_uses_env_defaults_when_no_params(self, mock_get_client):
         """未传入 LLM 参数时应使用环境变量默认值。"""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -364,18 +364,18 @@ class TestExtractGlossary:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Test")]
 
         with patch.dict("os.environ", {}, clear=False):
             extract_glossary(records=records, target_lang="zh-CN")
 
-        # Verify OpenAI was called (client creation happened)
-        mock_openai_cls.assert_called_once()
+        # Verify client creation happened
+        mock_get_client.assert_called_once()
 
-    @patch("engine.glossary_extractor.OpenAI")
-    def test_llm_returns_empty_content(self, mock_openai_cls):
+    @patch("engine.glossary_extractor._get_client")
+    def test_llm_returns_empty_content(self, mock_get_client):
         """LLM 返回空内容时应返回空列表。"""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -383,7 +383,7 @@ class TestExtractGlossary:
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         records = [_make_record("Some text")]
         result = extract_glossary(records=records, target_lang="zh-CN")

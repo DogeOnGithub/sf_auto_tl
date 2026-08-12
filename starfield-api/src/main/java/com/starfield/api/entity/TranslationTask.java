@@ -70,6 +70,13 @@ public class TranslationTask {
     @TableField("sync_fail_count")
     private Integer syncFailCount = 0;
 
+    /**
+     * 失败原因分类 目前只有 sync_timeout（连续同步失败被判死）
+     * <p>用 ALWAYS 策略是为了任务被复活时能把它清成 null 默认的 NOT_NULL 策略写不进 null
+     */
+    @TableField(value = "failed_reason", updateStrategy = FieldStrategy.ALWAYS)
+    private String failedReason;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

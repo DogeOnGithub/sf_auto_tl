@@ -8,9 +8,11 @@ import pytest
 
 from engine.esm_parser import StringRecord
 from engine.llm_client import (
+    MAX_PROMPT_DICT_ENTRIES,
     MAX_RETRIES,
     RETRY_DELAYS,
     _parse_response,
+    _relevant_entries,
     _translate_batch,
     translate_records,
 )
@@ -48,41 +50,42 @@ class TestParseResponse:
     """翻译结果解析与 ID 匹配测试。"""
 
     def test_exact_match(self):
-        """返回行数与记录数一致时，逐行匹配。"""
+        """返回行数与记录数一致时，逐行匹配且无缺失。"""
         records = _make_records(3)
         response_text = "[1] 翻译0\n[2] 翻译1\n[3] 翻译2"
-        result = _parse_response(response_text, records)
+        result, missing = _parse_response(response_text, records)
 
         assert len(result) == 3
+        assert missing == []
         for i, r in enumerate(records):
             assert result[r.record_id] == f"翻译{i}"
 
-    def test_fewer_lines_falls_back_to_original(self):
-        """返回行数不足时，缺失的记录回退到原文。"""
+    def test_fewer_lines_reported_as_missing(self):
+        """返回行数不足时，缺失的记录不进结果、只记入 missing（回退由上层处理）。"""
         records = _make_records(3)
         response_text = "[1] 翻译0"
-        result = _parse_response(response_text, records)
+        result, missing = _parse_response(response_text, records)
 
-        assert result[records[0].record_id] == "翻译0"
-        assert result[records[1].record_id] == records[1].text
-        assert result[records[2].record_id] == records[2].text
+        assert result == {records[0].record_id: "翻译0"}
+        assert missing == [records[1].record_id, records[2].record_id]
 
-    def test_empty_line_falls_back_to_original(self):
-        """空翻译行回退到原文。"""
+    def test_empty_line_reported_as_missing(self):
+        """空翻译行记入 missing。"""
         records = _make_records(2)
         response_text = "[1] 翻译0"
-        result = _parse_response(response_text, records)
+        result, missing = _parse_response(response_text, records)
 
-        assert result[records[0].record_id] == "翻译0"
-        assert result[records[1].record_id] == records[1].text
+        assert result == {records[0].record_id: "翻译0"}
+        assert missing == [records[1].record_id]
 
-    def test_preserves_all_record_ids(self):
-        """结果字典应包含所有输入记录的 ID。"""
+    def test_unnumbered_response_yields_no_translation(self):
+        """响应缺少 [编号] 标记时全部记入 missing。"""
         records = _make_records(5)
         response_text = "\n".join([f"T{i}" for i in range(5)])
-        result = _parse_response(response_text, records)
+        result, missing = _parse_response(response_text, records)
 
-        assert set(result.keys()) == {r.record_id for r in records}
+        assert result == {}
+        assert missing == [r.record_id for r in records]
 
 
 # ---------------------------------------------------------------------------
@@ -138,13 +141,17 @@ class TestTranslateBatch:
         assert mock_sleep.call_count == MAX_RETRIES - 1
 
     def test_passes_custom_prompt_and_dictionary(self):
-        """应将 custom_prompt 和 dictionary_entries 传递给 build_prompt。"""
-        records = _make_records(1)
+        """应将 custom_prompt 和本批相关的 dictionary_entries 传递给 build_prompt。"""
+        records = [StringRecord(record_id="NPC_:00000001:FULL", text="A Sword here")]
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(["翻译"])
 
         custom = "自定义翻译指令"
-        entries = [{"sourceText": "Sword", "targetText": "剑"}]
+        entries = [
+            {"sourceText": "Sword", "targetText": "剑"},
+            # 本批文本里没出现 应被 _relevant_entries 过滤掉 不占 prompt 预算
+            {"sourceText": "Spaceship", "targetText": "飞船"},
+        ]
 
         with patch("engine.llm_client.build_prompt") as mock_build:
             mock_build.return_value = "mocked prompt"
@@ -153,7 +160,7 @@ class TestTranslateBatch:
             mock_build.assert_called_once_with(
                 texts_to_translate=[records[0].text],
                 custom_prompt=custom,
-                dictionary_entries=entries,
+                dictionary_entries=[entries[0]],
             )
 
     def test_system_message_contains_target_lang(self):
@@ -273,3 +280,51 @@ class TestTranslateRecords:
 
         call_args = client.chat.completions.create.call_args
         assert call_args.kwargs.get("model") == "test-model" or call_args[1].get("model") == "test-model"
+
+
+# ---------------------------------------------------------------------------
+# _relevant_entries 测试（词典按批过滤）
+# ---------------------------------------------------------------------------
+
+class TestRelevantEntries:
+    """词典按批过滤测试。"""
+
+    def test_filters_out_absent_terms(self):
+        """没出现在本批文本里的术语对这批没有约束价值 应被过滤掉。"""
+        entries = [
+            {"sourceText": "Vasco", "targetText": "瓦斯科"},
+            {"sourceText": "Spaceship", "targetText": "飞船"},
+        ]
+        result = _relevant_entries(entries, ["Vasco is here"])
+
+        assert result == [entries[0]]
+
+    def test_match_is_case_insensitive(self):
+        """术语表由 LLM 生成 可能把大小写归一化 精确匹配会漏掉约束。"""
+        entries = [{"sourceText": "Weaponengineering Rank", "targetText": "武器工程等级"}]
+        result = _relevant_entries(entries, ["Increases WeaponEngineering Rank by 1"])
+
+        assert result == entries
+
+    def test_keeps_original_casing_in_output(self):
+        """只有命中判断忽略大小写 下发给 prompt 的仍是词典里原本的写法。"""
+        entries = [{"sourceText": "VASCO", "targetText": "瓦斯科"}]
+        result = _relevant_entries(entries, ["vasco follows you"])
+
+        assert result[0]["sourceText"] == "VASCO"
+
+    def test_truncates_to_cap_keeping_longest(self):
+        """条数超上限时保留较长的术语 长术语更容易被误译。"""
+        entries = [
+            {"sourceText": "T" * (i + 1), "targetText": f"译{i}"}
+            for i in range(MAX_PROMPT_DICT_ENTRIES + 5)
+        ]
+        result = _relevant_entries(entries, ["T" * (MAX_PROMPT_DICT_ENTRIES + 5)])
+
+        assert len(result) == MAX_PROMPT_DICT_ENTRIES
+        assert len(result[0]["sourceText"]) > len(result[-1]["sourceText"])
+
+    def test_empty_dictionary_passes_through(self):
+        """空词典原样返回 不构造多余对象。"""
+        assert _relevant_entries(None, ["text"]) is None
+        assert _relevant_entries([], ["text"]) == []

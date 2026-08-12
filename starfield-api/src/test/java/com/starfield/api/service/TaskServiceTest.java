@@ -1,6 +1,7 @@
 package com.starfield.api.service;
 
 import com.starfield.api.client.EngineClient;
+import com.starfield.api.client.EngineTaskNotFoundException;
 import com.starfield.api.dto.ConfirmationSaveItem;
 import com.starfield.api.dto.ProgressCallbackRequest;
 import com.starfield.api.entity.TaskStatus;
@@ -153,6 +154,53 @@ class TaskServiceTest {
         verify(translationTaskRepository).updateById(any(TranslationTask.class));
     }
 
+    /**
+     * 安全网：引擎中已无该任务（且已过注册宽限期）应立即判死并回收本地文件
+     * <p>404 说明引擎重启过、翻译线程已死 不存在「删文件搞崩正在跑的任务」的风险
+     */
+    @Test
+    void syncActiveTasksFromEngine_engineTaskLost_marksFailedAndCleansUpFiles(@TempDir Path tempDir) throws IOException {
+        var filePath = tempDir.resolve("upload.esm");
+        Files.writeString(filePath, "original");
+
+        var task = createTask("task-lost", "mod.esm", TaskStatus.translating, 3, 10);
+        task.setFilePath(filePath.toString());
+        // 拉到宽限期之外
+        task.setCreatedAt(LocalDateTime.now().minusMinutes(10));
+        when(translationTaskRepository.selectList(any())).thenReturn(List.of(task));
+        when(engineClient.getTaskStatus("task-lost"))
+                .thenThrow(new EngineTaskNotFoundException("task-lost", null));
+
+        taskService.syncActiveTasksFromEngine();
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.failed);
+        assertThat(task.getFailedReason()).isEqualTo(TaskService.FAILED_REASON_ENGINE_LOST);
+        assertThat(Files.exists(filePath)).isFalse();
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /**
+     * 安全网：任务刚创建就查到 404 时处于注册宽限期 只累加计数不判死
+     * <p>任务先入库再提交给引擎 这中间的窗口内查到 404 是正常的 不能把刚提交的任务打死
+     */
+    @Test
+    void syncActiveTasksFromEngine_engineTaskLostWithinGrace_onlyIncrementsFailCount(@TempDir Path tempDir) throws IOException {
+        var filePath = tempDir.resolve("upload.esm");
+        Files.writeString(filePath, "original");
+
+        var task = createTask("task-fresh", "mod.esm", TaskStatus.waiting, 0, 0);
+        task.setFilePath(filePath.toString());
+        when(translationTaskRepository.selectList(any())).thenReturn(List.of(task));
+        when(engineClient.getTaskStatus("task-fresh"))
+                .thenThrow(new EngineTaskNotFoundException("task-fresh", null));
+
+        taskService.syncActiveTasksFromEngine();
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.waiting);
+        assertThat(task.getSyncFailCount()).isEqualTo(1);
+        assertThat(Files.exists(filePath)).isTrue();
+    }
+
     /** 安全网：引擎返回 outputFilePath 时应触发完成处理 */
     @Test
     void syncActiveTasksFromEngine_engineReturnsCompleted_handlesCompletion(@TempDir Path tempDir) throws IOException {
@@ -255,14 +303,17 @@ class TaskServiceTest {
         verify(translationTaskRepository).updateById(task);
     }
 
-    /** confirmation 模式下引擎回调 assembling 时应拦截为 pending_confirmation */
+    /**
+     * confirmation 模式下引擎回调 completed 时应拦截为 pending_confirmation
+     * <p>Engine 在 confirmation 模式下跳过重组 直接回调 completed 不会经过 assembling
+     */
     @Test
-    void handleProgressCallback_confirmationModeAssembling_interceptsToPendingConfirmation() {
+    void handleProgressCallback_confirmationModeCompleted_interceptsToPendingConfirmation() {
         var task = createTask("task-c2", "test.esm", TaskStatus.translating, 10, 10);
         task.setConfirmationMode("confirmation");
         when(translationTaskRepository.selectById("task-c2")).thenReturn(task);
 
-        var request = new ProgressCallbackRequest("task-c2", "assembling",
+        var request = new ProgressCallbackRequest("task-c2", "completed",
                 new ProgressCallbackRequest.Progress(10, 10), null, null, null, null);
 
         taskService.handleProgressCallback("task-c2", request);
@@ -308,9 +359,9 @@ class TaskServiceTest {
         verify(translationTaskRepository).updateById(task);
     }
 
-    /** confirmation 模式下 assembling 回调同时携带 items 时应先写入记录再拦截状态 */
+    /** confirmation 模式下 completed 回调同时携带 items 时应先写入记录再拦截状态 */
     @Test
-    void handleProgressCallback_confirmationModeAssemblingWithItems_savesRecordsAndIntercepts() {
+    void handleProgressCallback_confirmationModeCompletedWithItems_savesRecordsAndIntercepts() {
         var task = createTask("task-c5", "test.esm", TaskStatus.translating, 10, 10);
         task.setConfirmationMode("confirmation");
         when(translationTaskRepository.selectById("task-c5")).thenReturn(task);
@@ -318,7 +369,7 @@ class TaskServiceTest {
         var items = List.of(
                 new ProgressCallbackRequest.TranslationItem("r1", "text", "last", "最后", "")
         );
-        var request = new ProgressCallbackRequest("task-c5", "assembling",
+        var request = new ProgressCallbackRequest("task-c5", "completed",
                 new ProgressCallbackRequest.Progress(10, 10), null, null, null, items);
 
         taskService.handleProgressCallback("task-c5", request);
@@ -326,6 +377,70 @@ class TaskServiceTest {
         verify(translationConfirmationService).saveConfirmationRecords(eq("task-c5"), any());
         assertThat(task.getStatus()).isEqualTo(TaskStatus.pending_confirmation);
         verify(translationTaskRepository).updateById(task);
+    }
+
+    /**
+     * 被同步超时误判为失败的任务 收到引擎的 completed 回调应复活并走完成流程
+     * <p>这类失败只是推测 引擎线程可能一直活着并最终翻完 丢掉这个回调会让译文文件
+     * 白躺在磁盘上、用户永远拿不到
+     */
+    @Test
+    void handleProgressCallback_syncTimeoutFailedTask_revivedByCompletedCallback(@TempDir Path tempDir) throws IOException {
+        var outputFile = tempDir.resolve("mod_translated.esm");
+        Files.writeString(outputFile, "translated content");
+
+        var task = createTask("task-revive", "mod.esm", TaskStatus.failed, 8, 10);
+        task.setFailedReason(TaskService.FAILED_REASON_SYNC_TIMEOUT);
+        task.setErrorMessage("引擎连续同步失败 60 次（约 30 分钟）");
+        when(translationTaskRepository.selectById("task-revive")).thenReturn(task);
+        when(cosService.uploadFile(any(Path.class), any(String.class), eq("mod.zip")))
+                .thenReturn("https://cos.example.com/translations/task-revive/mod.zip");
+
+        var request = new ProgressCallbackRequest("task-revive", "completed",
+                new ProgressCallbackRequest.Progress(10, 10), outputFile.toString(), null, null, null);
+
+        taskService.handleProgressCallback("task-revive", request);
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.completed);
+        assertThat(task.getFailedReason()).isNull();
+        assertThat(task.getDownloadUrl()).isEqualTo("https://cos.example.com/translations/task-revive/mod.zip");
+        verify(translationTaskRepository).updateById(task);
+    }
+
+    /**
+     * confirmation 模式的同步超时任务不应被复活
+     * <p>判死时确认记录已被清掉 复活成 pending_confirmation 只会给出一个空的确认列表
+     */
+    @Test
+    void handleProgressCallback_syncTimeoutConfirmationTask_notRevived() {
+        var task = createTask("task-conf-revive", "mod.esm", TaskStatus.failed, 8, 10);
+        task.setConfirmationMode("confirmation");
+        task.setFailedReason(TaskService.FAILED_REASON_SYNC_TIMEOUT);
+        when(translationTaskRepository.selectById("task-conf-revive")).thenReturn(task);
+
+        var request = new ProgressCallbackRequest("task-conf-revive", "completed",
+                new ProgressCallbackRequest.Progress(10, 10), null, null, null, null);
+
+        taskService.handleProgressCallback("task-conf-revive", request);
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.failed);
+        verify(translationTaskRepository, never()).updateById(any(TranslationTask.class));
+    }
+
+    /** 引擎明确报失败的任务不应被后到的 completed 回调复活 */
+    @Test
+    void handleProgressCallback_engineReportedFailure_notRevived() {
+        var task = createTask("task-hard-fail", "mod.esm", TaskStatus.failed, 5, 10);
+        task.setErrorMessage("translation error");
+        when(translationTaskRepository.selectById("task-hard-fail")).thenReturn(task);
+
+        var request = new ProgressCallbackRequest("task-hard-fail", "completed",
+                new ProgressCallbackRequest.Progress(10, 10), null, null, null, null);
+
+        taskService.handleProgressCallback("task-hard-fail", request);
+
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.failed);
+        verify(translationTaskRepository, never()).updateById(any(TranslationTask.class));
     }
 
     // ========== createZipArchive / cleanupLocalFiles 测试 ==========

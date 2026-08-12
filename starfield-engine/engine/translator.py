@@ -12,11 +12,26 @@ from engine.cache_client import query_cache, save_cache
 from engine.esm_parser import parse_esm
 from engine.esm_writer import write_esm
 from engine.glossary_extractor import extract_glossary
-from engine.llm_client import _split_batches, translate_records
+from engine.llm_client import (
+    DEFAULT_MAX_BATCH_CHARS,
+    DEFAULT_MAX_BATCH_RECORDS,
+    _split_batches,
+    translate_records,
+)
 from engine.strings_parser import parse_strings_dir
 from engine.strings_writer import write_strings_dir
 
 logger = logging.getLogger(__name__)
+
+# 触发自动术语提取的最小批次数
+# 只要需要分批 就存在同一专有名词在不同批次被译成不同名字的风险 这正是术语表要解决的问题；
+# 单批次时 LLM 在一次调用里看到全部文本 译名天然一致 不需要额外花一次调用去提取。
+# 阈值按「批次数」而不是「词条数」表达：批次上限调整时它自动跟着变，
+# 用词条数写死过一次 结果批次缩小后一个 499 词条的 mod 被切成 7 批却仍然拿不到术语表。
+GLOSSARY_MIN_BATCHES = 2
+
+# 译文产出率低于此比例时告警 但不熔断
+LOW_YIELD_WARN_RATE = 0.5
 
 # 翻译来源类型
 SOURCE_TYPE_ESM = "esm"
@@ -333,9 +348,13 @@ class Translator:
                     self._report_progress(task_id, callback_url, items=cached_items)
 
             # 2.5 术语提取（如启用且需要分批翻译）
-            # 单批次翻译时 LLM 在同一次调用中看到所有文本 不需要术语提取
-            needs_multiple_batches = len(_split_batches(dedup_records, 200000, 800)) > 1
-            if enable_glossary_extraction and uncached_records and needs_multiple_batches:
+            # 分批数必须和 translate_records 实际使用的上限一致 否则会出现
+            # 「判断时认为单批、实际翻译时切成多批」这种拿不到术语表的窗口
+            batch_count = len(_split_batches(
+                dedup_records, DEFAULT_MAX_BATCH_CHARS, DEFAULT_MAX_BATCH_RECORDS
+            ))
+            needs_glossary = batch_count >= GLOSSARY_MIN_BATCHES
+            if enable_glossary_extraction and uncached_records and needs_glossary:
                 try:
                     self._update_status(task_id, STATUS_EXTRACTING_GLOSSARY)
                     self._report_progress(task_id, callback_url)
@@ -353,8 +372,8 @@ class Translator:
                     logger.info("[_run_task] 术语提取完成 task_id %s glossary_count %d merged_count %d", task_id, len(glossary), len(dictionary_entries) if dictionary_entries else 0)
                 except Exception as e:
                     logger.warning("[_run_task] 术语提取异常 降级为无术语约束模式 task_id %s error %s", task_id, str(e))
-            elif enable_glossary_extraction and uncached_records and not needs_multiple_batches:
-                logger.info("[_run_task] 单批次翻译 跳过术语提取 task_id %s dedup_count %d", task_id, len(dedup_records))
+            elif enable_glossary_extraction and uncached_records and not needs_glossary:
+                logger.info("[_run_task] 单批次翻译 LLM 可看到全部上下文 跳过术语提取 task_id %s dedup_count %d batch_count %d", task_id, len(dedup_records), batch_count)
 
             # 3. 翻译未命中词条
             self._update_status(task_id, STATUS_TRANSLATING)
@@ -405,13 +424,36 @@ class Translator:
                     llm_base_url=llm_base_url,
                     llm_api_key=llm_api_key,
                     llm_model=llm_model,
+                    task_id=task_id,
                 )
+
+                # 3.5 零产出熔断
+                # 一条译文都没拿到 说明是配置或账号层面的问题（base_url 写错、key 失效、
+                # 模型名不存在），不是个别批次的偶发失败。继续往下走会把全部词条按原文
+                # 回写成一个「翻译完成」的 ESM，用户拿到一个看起来正常实际没翻的文件，
+                # 比直接失败更难排查。这里直接判失败。
+                if not dedup_translations:
+                    logger.error(
+                        "[_run_task] 所有 LLM 调用均未产出译文 判定任务失败 task_id %s dedup_count %d",
+                        task_id, len(dedup_records),
+                    )
+                    self._set_error(task_id, "所有 LLM 调用均未产出译文 请检查 LLM 地址、密钥和模型名配置")
+                    self._report_progress(task_id, callback_url)
+                    return
 
                 # 将去重后的翻译结果展开回所有 record_id
                 new_translations = {}
                 for first_id, translated_text in dedup_translations.items():
                     for rid in dedup_map.get(first_id, [first_id]):
                         new_translations[rid] = translated_text
+
+                # 产出率过低时告警 不熔断：部分批次失败仍有回退原文的价值
+                yield_rate = len(dedup_translations) / len(dedup_records)
+                if yield_rate < LOW_YIELD_WARN_RATE:
+                    logger.warning(
+                        "[_run_task] 译文产出率偏低 task_id %s translated %d dedup_count %d yield_rate %.2f",
+                        task_id, len(dedup_translations), len(dedup_records), yield_rate,
+                    )
             else:
                 logger.info("[_run_task] 所有词条命中缓存 task_id %s", task_id)
                 new_translations = {}
