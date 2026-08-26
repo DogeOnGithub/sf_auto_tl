@@ -467,6 +467,10 @@ async function handleUpload(options: UploadRequestOptions) {
         </div>
       </div>
 
+      <p v-if="!useCustomLlm" class="llm-hint">
+        系统默认额度为所有人共用，上限 10 万词条。超过的文件请切到「用我的 KEY」，否则会在解析后被拒绝
+      </p>
+
       <div v-if="useCustomLlm" class="llm-config">
         <el-input v-model="llmBaseUrl" placeholder="API URL，如 https://api.deepseek.com" style="margin-bottom: 8px" />
         <el-input v-model="llmApiKey" placeholder="API Key" type="password" show-password style="margin-bottom: 8px" />

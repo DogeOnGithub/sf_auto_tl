@@ -15,6 +15,7 @@ from engine.glossary_extractor import extract_glossary
 from engine.llm_client import (
     DEFAULT_MAX_BATCH_CHARS,
     DEFAULT_MAX_BATCH_RECORDS,
+    _env_int,
     _split_batches,
     translate_records,
 )
@@ -33,6 +34,13 @@ GLOSSARY_MIN_BATCHES = 2
 # 译文产出率低于此比例时告警 但不熔断
 LOW_YIELD_WARN_RATE = 0.5
 
+# 使用引擎兜底 KEY 时允许翻译的词条上限 超过则必须自带 API 地址和 KEY
+# 兜底 KEY 是所有没填自己配置的用户共用的，一个几十万词条的 mod 一次就能把余额抽干，
+# 之后所有人的任务都只能拿到 402。线上出过一次：同一个 30 万词条的 mod 被反复提交 7 次，
+# 且都是 confirmation 模式（skip_cache=True 不写缓存），每次都按原价重算，两小时烧完余额。
+# 上限只约束兜底 KEY：用户自带 KEY 时花的是自己的钱，不设限。
+MAX_ENTRIES_WITHOUT_OWN_KEY = _env_int("MAX_ENTRIES_WITHOUT_OWN_KEY", 100000)
+
 # 翻译来源类型
 SOURCE_TYPE_ESM = "esm"
 SOURCE_TYPE_STRINGS = "strings"
@@ -50,6 +58,29 @@ VALID_STATUSES = frozenset({
     STATUS_WAITING, STATUS_PARSING, STATUS_EXTRACTING_GLOSSARY,
     STATUS_TRANSLATING, STATUS_ASSEMBLING, STATUS_COMPLETED, STATUS_FAILED,
 })
+
+
+def _has_own_llm_credentials(llm_base_url: str | None, llm_api_key: str | None) -> bool:
+    """判断调用方是否自带了完整的 LLM 凭证。
+
+    <p>判空用 truthy + strip 而不是 `is None`：llm_client._get_client 里的 fallback 写法是
+    `api_key or os.environ.get("LLM_API_KEY")`，空串同样会落回兜底 KEY。若这里用 `is None`
+    判定，传空串就能绕过词条上限继续烧兜底余额。
+
+    <p>要求 base_url 和 key 同时具备。只填 key 不填 base_url 时会打到兜底的 base_url 上，
+    只填 base_url 不填 key 则直接用兜底 KEY 打到用户地址上，两种都不是「完全自费」。
+    前端开启「用我的 KEY」时三项都是必填，所以这里主要防御绕过前端直连 API 的调用。
+
+    Args:
+        llm_base_url: 调用方传入的 LLM API 地址。
+        llm_api_key: 调用方传入的 LLM API Key。
+
+    Returns:
+        两者都非空返回 True。
+    """
+    has_base_url = bool(llm_base_url and llm_base_url.strip())
+    has_api_key = bool(llm_api_key and llm_api_key.strip())
+    return has_base_url and has_api_key
 
 
 def _parse_source(source_type: str, file_path: str):
@@ -277,7 +308,7 @@ class Translator:
         enable_glossary_extraction: bool = True,
         source_type: str = SOURCE_TYPE_ESM,
     ) -> None:
-        """执行翻译任务的完整流程：解析 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
+        """执行翻译任务的完整流程：解析 → 词条数护栏 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
         try:
             # 1. 解析 ESM 或 Strings 目录
             self._update_status(task_id, STATUS_PARSING)
@@ -290,6 +321,23 @@ class Translator:
             if total == 0:
                 logger.info("[_run_task] 无可翻译记录 task_id %s", task_id)
                 self._update_status(task_id, STATUS_COMPLETED)
+                self._report_progress(task_id, callback_url)
+                return
+
+            # 1.5 兜底 KEY 的词条数护栏
+            # 必须卡在这里：往下第一个花钱的动作是术语提取（步骤 2.5），而它被 try/except
+            # 包着降级，异常会被吞掉拦不住任务。放在解析拿到 total 之后、缓存查询之前，
+            # 既保证零付费调用，也省掉一次几十万词条的缓存查询请求。
+            if total > MAX_ENTRIES_WITHOUT_OWN_KEY and not _has_own_llm_credentials(llm_base_url, llm_api_key):
+                logger.warning(
+                    "[_run_task] 词条数超过兜底 KEY 上限且未自带凭证 拒绝翻译 task_id %s total %d limit %d",
+                    task_id, total, MAX_ENTRIES_WITHOUT_OWN_KEY,
+                )
+                self._set_error(
+                    task_id,
+                    f"该文件共 {total} 条待翻译文本 超过公共额度上限 {MAX_ENTRIES_WITHOUT_OWN_KEY} 条。"
+                    f"请在上传时打开「用我的 KEY」并填写你自己的 API 地址、API Key 和模型名称后重新提交",
+                )
                 self._report_progress(task_id, callback_url)
                 return
 

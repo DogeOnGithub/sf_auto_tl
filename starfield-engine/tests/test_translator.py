@@ -231,3 +231,109 @@ class TestGlossaryTrigger:
     def test_multi_batch_triggers_extraction(self):
         """超出单批上限一条就会分批 此时必须提取术语表兜住跨批译名一致性。"""
         assert self._run(DEFAULT_MAX_BATCH_RECORDS + 1).called is True
+
+
+class TestEntryLimitGuard:
+    """兜底 KEY 的词条数护栏测试。
+
+    护栏只在「超过上限」且「未自带完整凭证」时生效。用例统一把上限 patch 成个位数，
+    避免为了跨过 10 万这条线去构造 10 万条记录。
+    """
+
+    @staticmethod
+    def _run(
+        record_count: int,
+        limit: int,
+        llm_base_url: str | None = None,
+        llm_api_key: str | None = None,
+    ):
+        """跑一个指定词条数和凭证组合的任务。
+
+        Args:
+            record_count: 待翻译词条数。
+            limit: patch 后的护栏上限。
+            llm_base_url: 调用方传入的 LLM 地址。
+            llm_api_key: 调用方传入的 LLM Key。
+
+        Returns:
+            (终态任务字典, 关键依赖的 mock 字典)。
+        """
+        records = _make_records(record_count)
+        with patch("engine.translator.MAX_ENTRIES_WITHOUT_OWN_KEY", limit), \
+                patch("engine.translator.parse_esm", return_value=records), \
+                patch("engine.translator.query_cache", return_value={}) as mock_qc, \
+                patch("engine.translator.save_cache"), \
+                patch("engine.translator.write_esm",
+                      return_value=WriteResult(backup_path="/tmp/b.esm", output_path="/tmp/o.esm")), \
+                patch("engine.translator.translate_records",
+                      return_value={r.record_id: "译文" for r in records}) as mock_translate, \
+                patch("engine.translator.extract_glossary", return_value=[]) as mock_extract:
+            t = Translator()
+            t.submit_task(
+                "task-guard",
+                "/tmp/test.esm",
+                llm_base_url=llm_base_url,
+                llm_api_key=llm_api_key,
+            )
+            for _ in range(200):
+                task = t.get_task("task-guard")
+                if task and task["status"] in {STATUS_COMPLETED, STATUS_FAILED}:
+                    break
+                time.sleep(0.02)
+            return t.get_task("task-guard"), {
+                "query_cache": mock_qc,
+                "translate_records": mock_translate,
+                "extract_glossary": mock_extract,
+            }
+
+    def test_over_limit_without_own_key_fails(self):
+        """超过上限又没自带凭证时应判失败 且错误信息带上实际词条数和上限便于用户自查。"""
+        task, _ = self._run(record_count=6, limit=5)
+
+        assert task["status"] == STATUS_FAILED
+        assert "6" in task["error"]
+        assert "5" in task["error"]
+
+    def test_over_limit_without_own_key_makes_no_paid_call(self):
+        """护栏的意义在于零付费调用 术语提取和翻译都不能被触达。
+
+        query_cache 也一并断言：几十万词条的缓存查询本身就是一次大请求，
+        护栏放在它之前才算真正卡在最前面。
+        """
+        _, mocks = self._run(record_count=6, limit=5)
+
+        assert mocks["query_cache"].called is False
+        assert mocks["extract_glossary"].called is False
+        assert mocks["translate_records"].called is False
+
+    def test_over_limit_with_own_credentials_passes(self):
+        """自带地址和 KEY 时花的是用户自己的钱 不受上限约束。"""
+        task, mocks = self._run(
+            record_count=6, limit=5,
+            llm_base_url="https://my.api.com", llm_api_key="sk-mine",
+        )
+
+        assert task["status"] == STATUS_COMPLETED
+        assert mocks["translate_records"].called is True
+
+    def test_within_limit_without_own_key_passes(self):
+        """正好等于上限时放行 护栏用的是严格大于。"""
+        task, mocks = self._run(record_count=5, limit=5)
+
+        assert task["status"] == STATUS_COMPLETED
+        assert mocks["translate_records"].called is True
+
+    def test_blank_key_treated_as_missing(self):
+        """空白 KEY 会在 _get_client 里落回兜底 KEY 所以必须等同于没提供。"""
+        task, _ = self._run(
+            record_count=6, limit=5,
+            llm_base_url="https://my.api.com", llm_api_key="   ",
+        )
+
+        assert task["status"] == STATUS_FAILED
+
+    def test_key_without_base_url_treated_as_missing(self):
+        """只填 KEY 不填地址会打到兜底 base_url 上 不算完全自费。"""
+        task, _ = self._run(record_count=6, limit=5, llm_api_key="sk-mine")
+
+        assert task["status"] == STATUS_FAILED

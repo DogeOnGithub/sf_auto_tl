@@ -36,6 +36,9 @@ services:
       LLM_MAX_PROMPT_DICT_ENTRIES: ${LLM_MAX_PROMPT_DICT_ENTRIES:-200}
       LLM_GLOSSARY_MAX_CHARS: ${LLM_GLOSSARY_MAX_CHARS:-60000}
       LLM_GLOSSARY_MAX_TERMS: ${LLM_GLOSSARY_MAX_TERMS:-150}
+      # 用兜底 KEY（即上面的 LLM_API_KEY）时允许翻译的词条上限 超过则要求用户自带地址和 KEY
+      # 默认值与 engine/translator.py 的 MAX_ENTRIES_WITHOUT_OWN_KEY 保持一致
+      MAX_ENTRIES_WITHOUT_OWN_KEY: ${MAX_ENTRIES_WITHOUT_OWN_KEY:-100000}
       # INFO 才能看到 token 用量汇总 逐条原文译文在 DEBUG
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       API_BASE_URL: http://starfield-api:8080
