@@ -649,6 +649,22 @@ async function handleUpload(options: UploadRequestOptions) {
   transition: border-color 0.2s;
 }
 
+/*
+ * ESM 与 Strings 两个上传框共用同一高度口径，切换翻译来源时框体不跳动。
+ * el-upload 的 dragger 自带 40px 上下内边距，自定义的 strings 框没有，
+ * 这里统一改成「无上下内边距 + 固定最小高度 + 纵向居中」，两边就一致了。
+ */
+.file-upload :deep(.el-upload-dragger),
+.strings-upload {
+  box-sizing: border-box;
+  min-height: 200px;
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
 .strings-upload:hover {
   border-color: var(--el-color-primary);
 }

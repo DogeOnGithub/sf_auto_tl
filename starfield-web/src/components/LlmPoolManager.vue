@@ -355,6 +355,12 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column label="模型" prop="model" min-width="140" />
+      <!-- 状态是排查问题最先看的信息，紧跟成员和模型放在第 3 列 -->
+      <el-table-column label="状态" min-width="150">
+        <template #default="{ row }">
+          <el-tag :type="statusOf(row).type" size="small">{{ statusOf(row).text }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="API 地址" min-width="180">
         <template #default="{ row }">
           <span class="mono">{{ row.baseUrl }}</span>
@@ -367,11 +373,6 @@ onMounted(() => {
       </el-table-column>
       <el-table-column label="配比" width="70" align="center">
         <template #default="{ row }">{{ row.weight }}</template>
-      </el-table-column>
-      <el-table-column label="状态" min-width="150">
-        <template #default="{ row }">
-          <el-tag :type="statusOf(row).type" size="small">{{ statusOf(row).text }}</el-tag>
-        </template>
       </el-table-column>
       <el-table-column :label="`近 ${windowDays} 天 token`" min-width="140" align="right">
         <template #default="{ row }">
@@ -400,16 +401,18 @@ onMounted(() => {
       </el-table-column>
       <el-table-column v-if="props.isStarborn" label="操作" min-width="230" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" :loading="testingId === row.id" @click="handleTest(row)">验证</el-button>
-          <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
-          <el-button
-            size="small"
-            :type="row.enabled ? 'warning' : 'success'"
-            @click="handleToggleEnabled(row, !row.enabled)"
-          >
-            {{ row.enabled ? '停用' : '启用' }}
-          </el-button>
-          <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+          <div class="row-actions">
+            <el-button size="small" :loading="testingId === row.id" @click="handleTest(row)">验证</el-button>
+            <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
+            <el-button
+              size="small"
+              :type="row.enabled ? 'warning' : 'success'"
+              @click="handleToggleEnabled(row, !row.enabled)"
+            >
+              {{ row.enabled ? '停用' : '启用' }}
+            </el-button>
+            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -494,6 +497,9 @@ onMounted(() => {
   vertical-align: bottom;
   font-size: 12px;
 }
+/* 操作列宽度不够时按钮会换行，用 flex 保证每行都从左侧起排，不出现居中错位 */
+.row-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
+.row-actions :deep(.el-button + .el-button) { margin-left: 0; }
 .form-hint { margin-left: 12px; font-size: 12px; color: var(--el-text-color-secondary); }
 .usage-total { margin-top: 16px; font-size: 13px; color: var(--el-text-color-secondary); line-height: 1.6; }
 </style>
