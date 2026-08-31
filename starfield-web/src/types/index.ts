@@ -118,6 +118,14 @@ export interface CreationPageResponse {
   pages: number
 }
 
+/** 作者选项（搜索框联想与作者下拉共用） */
+export interface CreationAuthor {
+  /** 作者名称 */
+  name: string
+  /** 该作者名下的作品数 */
+  count: number
+}
+
 export interface CacheEntry {
   id: number
   taskId: string

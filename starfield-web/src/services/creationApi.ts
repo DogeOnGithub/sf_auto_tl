@@ -1,5 +1,5 @@
 import api from './api'
-import type { Creation, CreationPageResponse, TaskResponse } from '@/types'
+import type { Creation, CreationAuthor, CreationPageResponse, TaskResponse } from '@/types'
 
 /** 创建 Mod 作品（或为同名 mod 添加新版本） */
 export function createCreation(formData: FormData): Promise<Creation> {
@@ -142,9 +142,9 @@ export function deleteWarning(warningId: number): Promise<void> {
   return api.delete(`/api/creations/warnings/${warningId}`).then(() => {})
 }
 
-/** 查询所有已使用的作者名称 */
-export function getCreationAuthors(): Promise<string[]> {
-  return api.get<string[]>('/api/creations/authors').then((res) => res.data)
+/** 查询所有已使用的作者及其作品数 */
+export function getCreationAuthors(): Promise<CreationAuthor[]> {
+  return api.get<CreationAuthor[]>('/api/creations/authors').then((res) => res.data)
 }
 
 /** 上传/替换横幅图片 */

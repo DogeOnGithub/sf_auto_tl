@@ -3,6 +3,7 @@ package com.starfield.api.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.starfield.api.dto.CreationAuthorResponse;
 import com.starfield.api.dto.CreationPageResponse;
 import com.starfield.api.dto.CreationRequest;
 import com.starfield.api.dto.CreationResponse;
@@ -68,11 +69,13 @@ public class CreationService {
     }
 
     /**
-     * 查询所有已使用的作者名称（去重，按使用次数降序）
+     * 查询所有已使用的作者及其作品数（去重，按作品数降序）
      *
-     * @return 作者名称列表
+     * 作品数用于前端搜索框的作者联想排序与展示，作品数相同时按作者名升序，保证结果稳定不抖动
+     *
+     * @return 作者选项列表
      */
-    public List<String> listAuthors() {
+    public List<CreationAuthorResponse> listAuthors() {
         log.info("[listAuthors] 查询所有作者");
         var creations = creationRepository.selectList(
                 new QueryWrapper<Creation>().isNotNull("author").ne("author", "")
@@ -84,8 +87,9 @@ public class CreationService {
                 .filter(a -> !a.isEmpty())
                 .collect(Collectors.groupingBy(a -> a, Collectors.counting()))
                 .entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .map(Map.Entry::getKey)
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()
+                        .thenComparing(Map.Entry.comparingByKey()))
+                .map(e -> new CreationAuthorResponse(e.getKey(), e.getValue()))
                 .collect(Collectors.toList());
     }
 

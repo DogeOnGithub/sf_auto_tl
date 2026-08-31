@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Link, Search, Edit, Upload, Download, Star, Warning } from '@element-plus/icons-vue'
+import { Plus, Delete, Link, Search, Edit, Upload, Download, Star, Warning, User } from '@element-plus/icons-vue'
 import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile, getFeaturedCreations, featureCreation, unfeatureCreation, addWarning, updateWarning, deleteWarning, uploadBanner, deleteBanner, getCreationAuthors } from '@/services/creationApi'
 import { getCarouselImage } from '@/utils/creationUtils'
 import { downloadFile } from '@/services/taskApi'
 import { uploadToCos } from '@/services/cosUpload'
-import type { Creation, CreationImage, CreationWarning, TaskResponse } from '@/types'
+import type { Creation, CreationAuthor, CreationImage, CreationWarning, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
 
 const props = defineProps<{ isStarborn: boolean }>()
@@ -90,18 +90,6 @@ const allTags = computed(() => {
 /** 当前选中的搜索标签 */
 const selectedTag = ref('')
 
-/** 当前选中的作者搜索 */
-const selectedAuthor = ref('')
-
-/** 作者列表是否展开 */
-const authorsExpanded = ref(false)
-
-/** 展示的作者列表（折叠时最多 10 个） */
-const displayedAuthors = computed(() => {
-  if (authorsExpanded.value) return authorOptions.value
-  return authorOptions.value.slice(0, 10)
-})
-
 /** 详情抽屉图片上传状态 */
 const uploadingDetailImage = ref(false)
 
@@ -121,10 +109,10 @@ async function loadTags() {
   } catch { /* 忽略 */ }
 }
 
-/** 作者名称选项列表 */
-const authorOptions = ref<string[]>([])
+/** 作者选项列表（含作品数，按作品数降序） */
+const authorOptions = ref<CreationAuthor[]>([])
 
-/** 加载作者名称列表 */
+/** 加载作者选项列表 */
 async function loadAuthors() {
   try {
     authorOptions.value = await getCreationAuthors()
@@ -140,23 +128,60 @@ function handleTagClick(tag: string) {
     selectedTag.value = tag
     keyword.value = tag
   }
-  selectedAuthor.value = ''
   currentPage.value = 1
   loadCreations()
 }
 
-/** 点击作者快捷搜索 */
-function handleAuthorClick(author: string) {
-  if (selectedAuthor.value === author) {
-    selectedAuthor.value = ''
-    keyword.value = ''
-  } else {
-    selectedAuthor.value = author
-    keyword.value = author
-    selectedTag.value = ''
-  }
-  currentPage.value = 1
-  loadCreations()
+/** 联想下拉最多展示的作者数量 */
+const AUTHOR_SUGGESTION_LIMIT = 10
+
+/** 搜索框联想候选项，value 是选中后填入输入框的内容，Element Plus 约定的字段名 */
+interface AuthorSuggestion {
+  value: string
+  count: number
+}
+
+/**
+ * 搜索框作者联想
+ *
+ * 作者列表在页面加载时已全量拉取，这里纯内存过滤，不额外请求后端。
+ * 未输入内容时（聚焦触发）返回使用次数最多的若干作者，替代原先平铺在页面上的作者标签，
+ * 让用户仍能浏览有哪些作者。
+ *
+ * @param query 当前输入内容
+ * @param cb    Element Plus 的候选项回调
+ */
+function queryAuthorSuggestions(query: string, cb: (items: AuthorSuggestion[]) => void) {
+  var matched = query
+    ? authorOptions.value.filter(a => a.name.toLowerCase().includes(query.toLowerCase()))
+    : authorOptions.value
+  cb(matched.slice(0, AUTHOR_SUGGESTION_LIMIT).map(a => ({ value: a.name, count: a.count })))
+}
+
+/**
+ * 最近一次通过联想选中候选项的时间戳
+ *
+ * 键盘选中候选项时 Element Plus 在 keydown 阶段就完成 select，紧随其后的 keyup.enter 仍会冒泡上来，
+ * 用时间窗口吞掉这个 Enter，避免同一次操作发两遍列表请求。
+ */
+var lastSuggestionSelectAt = 0
+
+/** 选中联想的作者后立即搜索 */
+function handleAuthorSelect() {
+  lastSuggestionSelectAt = Date.now()
+  handleSearch()
+}
+
+/** 回车搜索，跳过紧跟在联想选中之后的重复触发 */
+function handleEnterSearch() {
+  if (Date.now() - lastSuggestionSelectAt < 300) return
+  handleSearch()
+}
+
+/** 点击卡片上的作者名，按该作者搜索 */
+function searchByAuthor(author: string) {
+  keyword.value = author
+  handleSearch()
 }
 
 /** 加载作品列表 */
@@ -175,7 +200,6 @@ async function loadCreations() {
 
 function handleSearch() {
   selectedTag.value = ''
-  selectedAuthor.value = ''
   currentPage.value = 1
   loadCreations()
 }
@@ -818,7 +842,25 @@ onMounted(() => {
     <!-- 顶部操作栏 -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <el-input v-model="keyword" placeholder="搜索名称、作者、标签..." :prefix-icon="Search" clearable style="width: 300px" @keyup.enter="handleSearch" @clear="handleSearch" />
+        <el-autocomplete
+          v-model="keyword"
+          :fetch-suggestions="queryAuthorSuggestions"
+          placeholder="搜索名称、作者、标签..."
+          :prefix-icon="Search"
+          :debounce="200"
+          clearable
+          style="width: 300px"
+          @select="handleAuthorSelect"
+          @keyup.enter="handleEnterSearch"
+          @clear="handleSearch"
+        >
+          <template #default="{ item }">
+            <div class="author-suggestion">
+              <span class="author-suggestion-name">{{ item.value }}</span>
+              <span class="author-suggestion-count">{{ item.count }} 个作品</span>
+            </div>
+          </template>
+        </el-autocomplete>
         <div class="sort-tabs">
           <el-button text :class="{ active: sortBy === 'latestVersion' }" @click="setSort('latestVersion')">最近更新</el-button>
           <el-button text :class="{ active: sortBy === 'createdAt' }" @click="setSort('createdAt')">最近分享</el-button>
@@ -830,14 +872,6 @@ onMounted(() => {
     <!-- 标签快捷搜索 -->
     <div class="tag-filter">
       <el-tag v-for="tag in allTags" :key="tag" :type="selectedTag === tag ? '' : 'info'" :effect="selectedTag === tag ? 'dark' : 'plain'" class="filter-tag" @click="handleTagClick(tag)">{{ tag }}</el-tag>
-    </div>
-
-    <!-- 作者快捷搜索 -->
-    <div v-if="authorOptions.length > 0" class="tag-filter author-filter">
-      <el-tag v-for="author in displayedAuthors" :key="author" :type="selectedAuthor === author ? '' : 'info'" :effect="selectedAuthor === author ? 'dark' : 'plain'" class="filter-tag" @click="handleAuthorClick(author)">{{ author }}</el-tag>
-      <el-button v-if="authorOptions.length > 10" text type="primary" size="small" class="expand-btn" @click="authorsExpanded = !authorsExpanded">
-        {{ authorsExpanded ? '收起' : '展开更多' }}
-      </el-button>
     </div>
 
     <!-- 卡片列表 -->
@@ -853,7 +887,10 @@ onMounted(() => {
           <div class="card-title">{{ item.name }}</div>
           <div v-if="item.translatedName" class="card-subtitle">{{ item.translatedName }}</div>
           <div class="card-meta">
-            <span v-if="item.author">{{ item.author }}</span>
+            <span v-if="item.author" class="card-author" :title="`搜索作者 ${item.author}`" @click.stop="searchByAuthor(item.author)">
+              <el-icon class="card-author-icon"><User /></el-icon>
+              <span class="card-author-name">{{ item.author }}</span>
+            </span>
             <span v-if="item.versions && item.versions.length > 1" class="version-count">{{ item.versions.length }} 个版本</span>
           </div>
           <div v-if="item.versions && item.versions.length > 0" class="card-version-row">
@@ -893,7 +930,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="作者">
           <el-select v-model="form.author" filterable allow-create default-first-option placeholder="选择或输入作者">
-            <el-option v-for="author in authorOptions" :key="author" :label="author" :value="author" />
+            <el-option v-for="author in authorOptions" :key="author.name" :label="author.name" :value="author.name" />
           </el-select>
         </el-form-item>
         <el-form-item label="CC 链接">
@@ -948,7 +985,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="作者">
           <el-select v-model="editForm.author" filterable allow-create default-first-option placeholder="选择或输入作者">
-            <el-option v-for="author in authorOptions" :key="author" :label="author" :value="author" />
+            <el-option v-for="author in authorOptions" :key="author.name" :label="author.name" :value="author.name" />
           </el-select>
         </el-form-item>
         <el-form-item label="CC 链接">
@@ -1243,8 +1280,10 @@ onMounted(() => {
 .sort-tabs .el-button.active { color: var(--el-color-primary); font-weight: 600; }
 .tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .filter-tag { cursor: pointer; }
-.author-filter { align-items: center; }
-.expand-btn { flex-shrink: 0; }
+/* 搜索框作者联想项：作者名在左，作品数在右侧弱化展示 */
+.author-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.author-suggestion-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-suggestion-count { flex-shrink: 0; font-size: 12px; color: var(--el-text-color-placeholder); }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .creation-card { cursor: pointer; transition: transform 0.2s; }
 .creation-card:hover { transform: translateY(-2px); }
@@ -1259,6 +1298,11 @@ onMounted(() => {
 .card-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-subtitle { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-meta { display: flex; gap: 8px; font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 6px; }
+/* 卡片作者：可点击，用比同行元信息更深的字色 + 人像图标提示可点，hover 再加下划线 */
+.card-author { display: inline-flex; align-items: center; gap: 3px; max-width: 65%; cursor: pointer; color: var(--el-text-color-regular); transition: color 0.2s; }
+.card-author:hover { color: var(--el-color-primary); text-decoration: underline; }
+.card-author-icon { font-size: 12px; flex-shrink: 0; }
+.card-author-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
 .card-time { font-size: 11px; color: var(--el-text-color-placeholder); margin-top: 4px; }
 .card-version-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--el-text-color-placeholder); margin-top: 4px; }

@@ -1,5 +1,6 @@
 package com.starfield.api.controller;
 
+import com.starfield.api.dto.CreationAuthorResponse;
 import com.starfield.api.dto.CreationPageResponse;
 import com.starfield.api.dto.CreationRequest;
 import com.starfield.api.dto.CreationResponse;
@@ -393,12 +394,12 @@ public class CreationController {
     }
 
     /**
-     * 查询所有已使用的作者名称
+     * 查询所有已使用的作者及其作品数
      *
-     * @return 作者名称列表
+     * @return 作者选项列表
      */
     @GetMapping("/authors")
-    public ResponseEntity<List<String>> listAuthors() {
+    public ResponseEntity<List<CreationAuthorResponse>> listAuthors() {
         log.info("[listAuthors] 收到查询作者列表请求");
         var authors = creationService.listAuthors();
         return ResponseEntity.ok(authors);
