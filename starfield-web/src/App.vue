@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled, Moon, Sunny } from '@element-plus/icons-vue'
+import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled, Moon, Sunny, Cpu } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
@@ -9,16 +9,24 @@ import PromptManager from '@/components/PromptManager.vue'
 import DictionaryManager from '@/components/DictionaryManager.vue'
 import CreationManager from '@/components/CreationManager.vue'
 import CacheManager from '@/components/CacheManager.vue'
+import LlmPoolManager from '@/components/LlmPoolManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
 import { useTheme } from '@/composables/useTheme'
 import type { FileUploadResponse } from '@/types'
 
-const VALID_MENUS = ['home', 'translate', 'history', 'cache', 'prompt', 'dictionary', 'creations']
+const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
+
+const VALID_MENUS = ['home', 'translate', 'history', 'cache', 'prompt', 'dictionary', 'creations', 'llm-pool']
+
+/** 星裔专属菜单，非星裔手动改 hash 也不该落进去，否则会看到一个空白页 */
+const STARBORN_MENUS = ['llm-pool']
 
 /** 从 hash 读取当前菜单 */
 function getMenuFromHash(): string {
   var hash = location.hash.replace('#/', '').replace('#', '')
-  return VALID_MENUS.includes(hash) ? hash : 'home'
+  if (!VALID_MENUS.includes(hash)) return 'home'
+  if (STARBORN_MENUS.includes(hash) && !isStarborn.value) return 'home'
+  return hash
 }
 
 const taskListRef = ref<InstanceType<typeof TaskList>>()
@@ -26,8 +34,10 @@ const activeMenu = ref(getMenuFromHash())
 
 /** 翻译源模式（控制 FileUpload：ESM/ESP 文件 或 本地化 mod 的 Strings 文件夹） */
 const uploadSourceMode = ref<'esm' | 'strings'>('esm')
-const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
 const { isDark, toggleTheme } = useTheme()
+
+/** 主题按钮只有图标 文案改由 title/aria-label 承载 保证可访问性 */
+const themeToggleLabel = computed(() => (isDark.value ? '切换到亮色模式' : '切换到暗黑模式'))
 
 /** 菜单切换时同步 hash */
 function handleMenuSelect(index: string) {
@@ -122,20 +132,29 @@ function handleUploadSuccess(payload: FileUploadResponse) {
           <el-icon><Folder /></el-icon>
           <span>Creations</span>
         </el-menu-item>
+        <el-menu-item v-if="isStarborn" index="llm-pool">
+          <el-icon><Cpu /></el-icon>
+          <span>模型池</span>
+        </el-menu-item>
       </el-menu>
-
-      <div class="theme-toggle">
-        <el-button text class="theme-toggle-btn" @click="toggleTheme">
-          <el-icon>
-            <Sunny v-if="isDark" />
-            <Moon v-else />
-          </el-icon>
-          <span>{{ isDark ? '亮色模式' : '暗黑模式' }}</span>
-        </el-button>
-      </div>
     </el-aside>
 
-    <el-container>
+    <el-container class="app-body">
+      <!-- 主题切换：定位在内容区右上角 各页面通用 -->
+      <el-button
+        text
+        circle
+        class="theme-toggle-btn"
+        :title="themeToggleLabel"
+        :aria-label="themeToggleLabel"
+        @click="toggleTheme"
+      >
+        <el-icon :size="18">
+          <Sunny v-if="isDark" />
+          <Moon v-else />
+        </el-icon>
+      </el-button>
+
       <el-main class="app-main">
         <div v-if="activeMenu === 'home'" class="page-content home-page">
           <h1 class="welcome-text">Welcome, Captain!</h1>
@@ -176,6 +195,11 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         <div v-if="activeMenu === 'cache'" class="page-content">
           <h2 class="page-title">翻译缓存</h2>
           <CacheManager :is-starborn="isStarborn" />
+        </div>
+
+        <div v-if="activeMenu === 'llm-pool' && isStarborn" class="page-content">
+          <h2 class="page-title">模型池</h2>
+          <LlmPoolManager :is-starborn="isStarborn" />
         </div>
       </el-main>
     </el-container>
@@ -218,20 +242,17 @@ function handleUploadSuccess(payload: FileUploadResponse) {
   border-right: none;
 }
 
-.theme-toggle {
-  margin-top: auto;
-  padding: 12px 16px;
-  border-top: 1px solid var(--el-border-color-lighter);
+/* 内容区作为主题按钮的定位参照 */
+.app-body {
+  position: relative;
 }
 
 .theme-toggle-btn {
-  width: 100%;
-  justify-content: flex-start;
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  z-index: 10;
   color: var(--el-text-color-regular);
-}
-
-.theme-toggle-btn .el-icon {
-  margin-right: 8px;
 }
 
 .app-main {

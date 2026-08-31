@@ -259,30 +259,47 @@ class TestSampleTexts:
 from unittest.mock import MagicMock, patch
 
 from engine.glossary_extractor import extract_glossary
+from tests.llm_test_helpers import (
+    bad_request_error,
+    build_pool,
+    fixed_source,
+    rate_limit_error,
+    raw_member,
+)
+
+
+def _completion(content: str) -> MagicMock:
+    """构造一个返回指定正文的补全响应。"""
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = content
+    response.choices[0].finish_reason = "stop"
+    # usage 给成非法值 让 _accumulate_usage 走「没有用量信息」的分支 不干扰断言
+    response.usage = None
+    return response
 
 
 class TestExtractGlossary:
-    """术语提取主函数测试。"""
+    """术语提取主函数测试。
+
+    <p>用 FixedSource（自带凭证语义）覆盖重试路径：它不做 failover，
+    断言的正是池化改造前那套「非 400 退避重试三次」的行为。
+    """
 
     def test_empty_records_returns_empty(self):
         """空记录列表应直接返回空列表，不调用 LLM。"""
         result = extract_glossary(records=[], target_lang="zh-CN")
         assert result == []
 
-    @patch("engine.glossary_extractor._get_client")
-    def test_successful_extraction(self, mock_get_client):
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_successful_extraction(self, mock_resolve):
         """成功提取术语表时应返回解析后的术语列表。"""
-        # Mock LLM response
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = _completion(json.dumps([
             {"sourceText": "Vasco", "targetText": "瓦斯科"},
             {"sourceText": "Constellation", "targetText": "群星组织"},
-        ])
-
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_get_client.return_value = mock_client
+        ]))
+        mock_resolve.return_value = fixed_source(mock_client)
 
         records = [_make_record("Vasco joined Constellation.")]
         result = extract_glossary(records=records, target_lang="zh-CN")
@@ -290,43 +307,33 @@ class TestExtractGlossary:
         assert len(result) == 2
         assert result[0]["sourceText"] == "Vasco"
         assert result[1]["sourceText"] == "Constellation"
-
-        # Verify LLM client was created
-        mock_get_client.assert_called_once()
-        # Verify chat completions was called
         mock_client.chat.completions.create.assert_called_once()
 
     @patch("engine.glossary_extractor.time.sleep")
-    @patch("engine.glossary_extractor._get_client")
-    def test_llm_failure_returns_empty(self, mock_get_client, mock_sleep):
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_llm_failure_returns_empty(self, mock_resolve, mock_sleep):
         """LLM 调用失败时应返回空列表。"""
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API error")
-        mock_get_client.return_value = mock_client
+        mock_resolve.return_value = fixed_source(mock_client)
 
         records = [_make_record("Some text")]
         result = extract_glossary(records=records, target_lang="zh-CN")
 
         assert result == []
-        # Should have retried MAX_RETRIES times
+        # 自带凭证无成员可换 重试次数与改造前一致
         assert mock_client.chat.completions.create.call_count == 3
 
     @patch("engine.glossary_extractor.time.sleep")
-    @patch("engine.glossary_extractor._get_client")
-    def test_retry_succeeds_on_second_attempt(self, mock_get_client, mock_sleep):
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_retry_succeeds_on_second_attempt(self, mock_resolve, mock_sleep):
         """第一次失败后重试成功应返回术语表。"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([
-            {"sourceText": "Vasco", "targetText": "瓦斯科"},
-        ])
-
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = [
             Exception("Temporary error"),
-            mock_response,
+            _completion(json.dumps([{"sourceText": "Vasco", "targetText": "瓦斯科"}])),
         ]
-        mock_get_client.return_value = mock_client
+        mock_resolve.return_value = fixed_source(mock_client)
 
         records = [_make_record("Vasco is here")]
         result = extract_glossary(records=records, target_lang="zh-CN")
@@ -336,16 +343,12 @@ class TestExtractGlossary:
         assert mock_client.chat.completions.create.call_count == 2
         mock_sleep.assert_called_once_with(1)  # RETRY_DELAYS[0]
 
-    @patch("engine.glossary_extractor._get_client")
-    def test_system_message_is_terminology_expert(self, mock_get_client):
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_system_message_is_terminology_expert(self, mock_resolve):
         """系统消息应为术语专家角色。"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "[]"
-
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_get_client.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _completion("[]")
+        mock_resolve.return_value = fixed_source(mock_client)
 
         records = [_make_record("Test text")]
         extract_glossary(records=records, target_lang="zh-CN")
@@ -355,37 +358,70 @@ class TestExtractGlossary:
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == "You are a professional game localization terminology expert."
 
-    @patch("engine.glossary_extractor._get_client")
-    def test_uses_env_defaults_when_no_params(self, mock_get_client):
-        """未传入 LLM 参数时应使用环境变量默认值。"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "[]"
-
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_uses_model_from_source(self, mock_resolve):
+        """模型名取自来源里的成员 而不是再去读环境变量。"""
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_get_client.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _completion("[]")
+        mock_resolve.return_value = fixed_source(mock_client, "glossary-model")
 
-        records = [_make_record("Test")]
+        extract_glossary(records=[_make_record("Test")], target_lang="zh-CN")
 
-        with patch.dict("os.environ", {}, clear=False):
-            extract_glossary(records=records, target_lang="zh-CN")
+        call_args = mock_client.chat.completions.create.call_args
+        assert call_args.kwargs["model"] == "glossary-model"
 
-        # Verify client creation happened
-        mock_get_client.assert_called_once()
-
-    @patch("engine.glossary_extractor._get_client")
-    def test_llm_returns_empty_content(self, mock_get_client):
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_llm_returns_empty_content(self, mock_resolve):
         """LLM 返回空内容时应返回空列表。"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = ""
-
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_get_client.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _completion("")
+        mock_resolve.return_value = fixed_source(mock_client)
 
         records = [_make_record("Some text")]
         result = extract_glossary(records=records, target_lang="zh-CN")
 
         assert result == []
+
+    @patch("engine.glossary_extractor._resolve_source", return_value=None)
+    def test_no_credentials_skips_extraction(self, mock_resolve):
+        """无可用凭证时跳过提取 术语表缺失只是少了译名统一约束 可降级。"""
+        result = extract_glossary(records=[_make_record("Test")], target_lang="zh-CN")
+        assert result == []
+
+    @patch("engine.glossary_extractor.time.sleep")
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_switches_member_on_rate_limit(self, mock_resolve, mock_sleep):
+        """成员限流时换成员重试 而不是耗着重试同一个。"""
+        first = MagicMock()
+        first.chat.completions.create.side_effect = rate_limit_error()
+        second = MagicMock()
+        second.chat.completions.create.return_value = _completion(
+            json.dumps([{"sourceText": "Vasco", "targetText": "瓦斯科"}])
+        )
+        pool = build_pool(
+            [raw_member(1), raw_member(2)],
+            clients={1: first, 2: second},
+        )
+        mock_resolve.return_value = pool
+
+        result = extract_glossary(records=[_make_record("Vasco")], target_lang="zh-CN")
+
+        assert len(result) == 1
+        assert first.chat.completions.create.call_count == 1
+        assert second.chat.completions.create.call_count == 1
+        # 成员级错误不睡等 直接换人
+        mock_sleep.assert_not_called()
+
+    @patch("engine.glossary_extractor._resolve_source")
+    def test_bad_request_does_not_switch_member(self, mock_resolve):
+        """400 时不换成员：术语表可降级 不值得为它多付一次请求。"""
+        first = MagicMock()
+        first.chat.completions.create.side_effect = bad_request_error()
+        second = MagicMock()
+        pool = build_pool([raw_member(1), raw_member(2)], clients={1: first, 2: second})
+        mock_resolve.return_value = pool
+
+        result = extract_glossary(records=[_make_record("Test")], target_lang="zh-CN")
+
+        assert result == []
+        assert second.chat.completions.create.call_count == 0

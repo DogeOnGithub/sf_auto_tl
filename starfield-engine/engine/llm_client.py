@@ -1,120 +1,42 @@
-"""LLM 客户端，调用 OpenAI 兼容接口批量翻译 String_Record。"""
+"""LLM 客户端，调用 OpenAI 兼容接口批量翻译 String_Record。
+
+<p>凭证来源被抽象成 CredentialSource（见 llm_pool）：用户自带 KEY 走 FixedSource，
+未自带则走默认凭证池。本模块只负责分批、重试与错误处置，不再自己解析凭证。
+"""
 
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Union
-
-from openai import BadRequestError, OpenAI
+from typing import Callable, Optional
 
 from engine.esm_parser import StringRecord
+from engine.llm_config import (
+    DEFAULT_MAX_BATCH_CHARS,
+    DEFAULT_MAX_BATCH_RECORDS,
+    MAX_OUTPUT_TOKENS,
+    MAX_PROMPT_DICT_ENTRIES,
+    MAX_RETRIES,
+    MAX_SPLIT_DEPTH,
+    MIN_BATCH_COVERAGE,
+    POOL_MAX_MEMBER_SWITCHES,
+    REQUEST_TIMEOUT,
+    RETRY_DELAYS,
+)
+from engine.llm_pool import (
+    ERROR_KIND_BAD_REQUEST,
+    ERROR_KIND_TRANSIENT,
+    FixedSource,
+    PoolMember,
+    classify_error,
+    get_pool,
+    normalize_base_url,  # noqa: F401 保留再导出 历史调用方从本模块引用该函数
+)
 from engine.prompt_builder import build_prompt
 
 logger = logging.getLogger(__name__)
-
-# 重试配置
-MAX_RETRIES = 3
-RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
-
-
-def _env_int(name: str, default: int) -> int:
-    """读取正整数型环境变量 非法或非正值回退默认值。
-
-    批次与输出上限做成可配置 是为了线上换模型时不用重新构建镜像就能调参。
-
-    Args:
-        name: 环境变量名。
-        default: 默认值。
-
-    Returns:
-        解析后的正整数。
-    """
-    raw = os.environ.get(name)
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.warning("[_env_int] 环境变量非整数 使用默认值 name %s raw %s default %d", name, raw, default)
-        return default
-    if value <= 0:
-        logger.warning("[_env_int] 环境变量必须为正数 使用默认值 name %s raw %s default %d", name, raw, default)
-        return default
-    return value
-
-
-def _env_int_or_none(name: str) -> int | None:
-    """读取可选的正整数型环境变量 未配置或非法时返回 None。
-
-    用于「不配置就不下发」的参数 与 _env_int 的区别是没有兜底默认值。
-
-    Args:
-        name: 环境变量名。
-
-    Returns:
-        解析后的正整数 未配置或非法时为 None。
-    """
-    raw = os.environ.get(name)
-    if not raw:
-        return None
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.warning("[_env_int_or_none] 环境变量非整数 忽略 name %s raw %s", name, raw)
-        return None
-    if value <= 0:
-        logger.warning("[_env_int_or_none] 环境变量必须为正数 忽略 name %s raw %s", name, raw)
-        return None
-    return value
-
-
-# 单批输出 token 预算
-# 我们不再显式下发 max_tokens（见 _completion_kwargs），实际上限由 provider 决定，
-# 而常见 OpenAI 兼容服务的默认输出上限低到 4096。批次按 4096 的八成反推，
-# 保证常规批次不会撞上限；万一撞上了还有 _should_split 的拆分兜底。
-OUTPUT_TOKEN_BUDGET = _env_int("LLM_OUTPUT_TOKEN_BUDGET", 3200)
-
-# 原文字符数到输出 token 数的折算系数
-# 经验值：英文原文约 4 字符 1 token，EN→ZH 译文 token 数约为原文 token 的 1.3 倍，
-# 再加每行 [编号] 前缀的开销，合起来 1 字符原文约消耗 0.4 个输出 token。
-# 这是估算不是保证，所以只用来定批次上限，真实截断仍靠 finish_reason 判断。
-_OUTPUT_TOKENS_PER_SOURCE_CHAR = 0.4
-
-# 分批上限：字符数和记录数是「双重条件」 谁先触顶就切批
-# 字符数上限由输出预算反推（3200 / 0.4 = 8000）作为输出预算的安全阀；
-# 线上词条平均 73 字符 p90 214 字符 因此 80 条常规情况约 5800 字符 由记录数先触顶；
-# 长 DESC 密集的批次则由 8000 字符先触顶。
-DEFAULT_MAX_BATCH_CHARS = _env_int(
-    "LLM_MAX_BATCH_CHARS", int(OUTPUT_TOKEN_BUDGET / _OUTPUT_TOKENS_PER_SOURCE_CHAR)
-)
-DEFAULT_MAX_BATCH_RECORDS = _env_int("LLM_MAX_BATCH_RECORDS", 80)
-
-# 单次响应输出 token 上限 未配置时不下发该参数
-# 硬编码下发是有害的：上限高于 provider 或模型允许值时会直接 400，
-# 而 400 会让整批走完重试后返回空结果、词条静默回退原文。
-# 截断检测不依赖这个参数——撞到 provider 自己的上限时 finish_reason 同样是 length。
-MAX_OUTPUT_TOKENS = _env_int_or_none("LLM_MAX_OUTPUT_TOKENS")
-
-# 单次 LLM 请求超时（秒）不设置时 SDK 默认 600s 会让卡住的批次拖住整个任务
-REQUEST_TIMEOUT = _env_int("LLM_REQUEST_TIMEOUT", 300)
-
-# 检测到截断时对半拆分重试的最大深度 80 条按 2^4 可降到 5 条一批
-MAX_SPLIT_DEPTH = _env_int("LLM_MAX_SPLIT_DEPTH", 4)
-
-# 单个 prompt 内最多携带的词典条数 超出时按术语长度降序截断
-# 长术语更容易被误译 优先保留
-MAX_PROMPT_DICT_ENTRIES = _env_int("LLM_MAX_PROMPT_DICT_ENTRIES", 200)
-
-# 译文覆盖率低于此比例视为响应不完整 触发拆分重试
-# 取 0.9 而非 1.0 是容忍模型偶发漏掉个别空文本 不为此付重试成本
-MIN_BATCH_COVERAGE = 0.9
-
-# SDK 会自行拼接的端点后缀 出现在 base_url 末尾时属于误填 需去掉
-_CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
 
 # 匹配 <...> 标签的正则
 _TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -160,32 +82,6 @@ class SplitBudget:
         return True
 
 
-def normalize_base_url(base_url: str | None) -> str | None:
-    """规整 LLM base_url 去掉误填的 /chat/completions 端点后缀。
-
-    <p>OpenAI SDK 会在 base_url 后面自己拼 /chat/completions。用户从供应商文档里复制
-    完整端点地址填进来时，实际请求会变成 .../v1/chat/completions/chat/completions 而直接 404。
-    线上 SiliconFlow 的配置就是这么填的，导致所有走该配置的任务一次成功调用都没有，
-    却因为失败批次静默回退原文而显示为「翻译完成」。
-
-    Args:
-        base_url: 用户配置或环境变量里的 base_url 可为 None。
-
-    Returns:
-        规整后的 base_url 输入为空时原样返回。
-    """
-    if not base_url:
-        return base_url
-    normalized = base_url.rstrip("/")
-    if normalized.endswith(_CHAT_COMPLETIONS_SUFFIX):
-        normalized = normalized[: -len(_CHAT_COMPLETIONS_SUFFIX)]
-        logger.warning(
-            "[normalize_base_url] base_url 误填了端点后缀 已自动去掉 原值 %s 修正为 %s",
-            base_url, normalized,
-        )
-    return normalized or base_url
-
-
 def _completion_kwargs() -> dict:
     """组装可选的 chat.completions 参数。
 
@@ -200,24 +96,50 @@ def _completion_kwargs() -> dict:
     return {"max_tokens": MAX_OUTPUT_TOKENS}
 
 
-def _get_client(base_url: str | None = None, api_key: str | None = None) -> OpenAI:
-    """创建 OpenAI 客户端，优先使用传入参数，fallback 到环境变量。
+def _resolve_source(
+    llm_base_url: str | None,
+    llm_api_key: str | None,
+    llm_model: str | None,
+):
+    """解析本次调用使用的凭证来源。
 
-    max_retries 显式置 0：SDK 默认自带 2 次重试，会和 _translate_batch 的 3 次重试相乘，
-    最坏情况下一个批次要打 9 次付费请求，成本不可控。重试统一由本模块负责。
+    <p>三项齐全视为用户自带凭证，直接构造 FixedSource：不入池、不 failover、不计入统计。
+    要求三项都有而不是只看地址和 Key，是因为缺了模型名就只能猜一个默认值，
+    而猜错的模型名在对方那里就是 404，最后表现为「配了自己的 KEY 却一条都没翻出来」。
+
+    <p>未自带则走默认凭证池。池为空时返回 None，由调用方判失败——不再回退到内置 KEY，
+    否则「配置漏了」会表现成「悄悄花了别的钱」。
+
+    Args:
+        llm_base_url: 调用方传入的 LLM API 地址。
+        llm_api_key: 调用方传入的 LLM API Key。
+        llm_model: 调用方传入的模型名称。
+
+    Returns:
+        FixedSource 或默认凭证池，两者都不可用时为 None。
     """
-    resolved_base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
-    return OpenAI(
-        api_key=api_key or os.environ.get("LLM_API_KEY", ""),
-        base_url=normalize_base_url(resolved_base_url),
-        timeout=REQUEST_TIMEOUT,
-        max_retries=0,
-    )
+    parts = [
+        (llm_base_url or "").strip(),
+        (llm_api_key or "").strip(),
+        (llm_model or "").strip(),
+    ]
+    if all(parts):
+        logger.info("[_resolve_source] 使用调用方自带凭证 model %s", parts[2])
+        return FixedSource(base_url=parts[0], api_key=parts[1], model=parts[2])
+    if any(parts):
+        # 只填了一部分：按自带处理会用上兜底的另一半，等于花着池的钱打到用户的地址上
+        logger.warning(
+            "[_resolve_source] 自带凭证不完整 回落默认凭证池 has_base_url %s has_api_key %s has_model %s",
+            bool(parts[0]), bool(parts[1]), bool(parts[2]),
+        )
 
-
-def _get_model(model: str | None = None) -> str:
-    """获取 LLM 模型名称，优先使用传入参数，fallback 到环境变量。"""
-    return model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+    pool = get_pool()
+    pool.refresh()
+    if pool.size() == 0:
+        logger.error("[_resolve_source] 默认凭证池为空 无可用凭证")
+        return None
+    logger.info("[_resolve_source] 使用默认凭证池 %s", pool.describe())
+    return pool
 
 
 def _mask_tags(text: str) -> tuple[str, list[str]]:
@@ -382,25 +304,31 @@ def _accumulate_usage(
     records: list[StringRecord],
     depth: int,
     usage: UsageTotals | None,
-) -> None:
+) -> tuple[int, int, int]:
     """累计单次调用的 token 用量。
 
     <p>之前完全没有记录用量，导致额度被烧完之后无法从日志倒推是哪些任务、花在哪里，
     只能靠词条数反推。推理模型的思维链计入 completion_tokens，这里单独累计便于识别。
+
+    <p>同时把用量返回给调用方：池化之后成本要按成员归集，成员维度的累加发生在
+    CredentialSource 上，而任务维度的累加仍然留在 UsageTotals 里。
 
     Args:
         response: LLM 响应对象。
         records: 本批次记录列表。
         depth: 当前拆分深度。
         usage: 任务级累计器 为 None 时只打 DEBUG 不累计。
+
+    Returns:
+        (prompt_tokens, completion_tokens, reasoning_tokens)。响应未带用量信息时全为 0。
     """
     raw = getattr(response, "usage", None)
     if raw is None:
-        return
+        return 0, 0, 0
     prompt_tokens = getattr(raw, "prompt_tokens", None)
     completion_tokens = getattr(raw, "completion_tokens", None)
     if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
-        return
+        return 0, 0, 0
 
     # 推理模型把思维链算在 completion 里 单独取出来便于判断钱花在推理还是译文上
     details = getattr(raw, "completion_tokens_details", None)
@@ -418,6 +346,7 @@ def _accumulate_usage(
         "[_accumulate_usage] 单批用量 batch_size %d depth %d prompt_tokens %d completion_tokens %d reasoning_tokens %d",
         len(records), depth, prompt_tokens, completion_tokens, reasoning_tokens,
     )
+    return prompt_tokens, completion_tokens, reasoning_tokens
 
 
 def _should_split(
@@ -469,8 +398,7 @@ def _should_split(
 
 
 def _split_and_translate(
-    client: OpenAI,
-    model: str,
+    source,
     records: list[StringRecord],
     target_lang: str,
     custom_prompt: str | None,
@@ -484,8 +412,7 @@ def _split_and_translate(
     调用方已保证 len(records) >= 2，因此每次拆分都能真正缩小批次不会死循环。
 
     Args:
-        client: OpenAI 客户端实例。
-        model: 模型名称。
+        source: 凭证来源 调用方已钉在触发拆分的那个成员上。
         records: 待拆分的记录列表。
         target_lang: 目标语言。
         custom_prompt: 用户自定义 Prompt。
@@ -503,8 +430,7 @@ def _split_and_translate(
         if not half:
             continue
         merged.update(_translate_batch(
-            client,
-            model,
+            source,
             half,
             target_lang,
             custom_prompt,
@@ -517,8 +443,7 @@ def _split_and_translate(
 
 
 def _translate_batch(
-    client: OpenAI,
-    model: str,
+    source,
     records: list[StringRecord],
     target_lang: str,
     custom_prompt: str | None,
@@ -527,15 +452,21 @@ def _translate_batch(
     budget: SplitBudget | None = None,
     usage: UsageTotals | None = None,
 ) -> dict[str, str]:
-    """翻译单个批次的记录，包含重试逻辑和截断自动拆分。
+    """翻译单个批次的记录，包含错误分类、成员切换与截断自动拆分。
 
     <p>响应不完整（finish_reason 为 length、正文为空、或译文覆盖率低于
     MIN_BATCH_COVERAGE）时把批次对半拆开重试，而不是让缺失的词条静默丢失。
     拆分会放大请求数（单批最坏 31 次），所以由 SplitBudget 在任务级封顶。
 
+    <p>失败处置按错误类型分流，这是池化的核心：限流、鉴权失效、余额不足、模型名不存在
+    都是成员级问题，直接换成员而不睡等；网络抖动和 5xx 才在同一成员上退避重试。
+    改造前所有非 400 错误都退避重试同一把 KEY，一个失效的 Key 会把每批的重试预算耗光。
+
+    <p>单批总请求数被封在 MAX_RETRIES + POOL_MAX_MEMBER_SWITCHES：切换和重试是两个
+    独立维度，不封顶的话三成员池会把 3 次重试放大成 9 次付费请求。
+
     Args:
-        client: OpenAI 客户端实例。
-        model: 模型名称。
+        source: 凭证来源，FixedSource（自带 KEY）或默认凭证池。
         records: 待翻译的 StringRecord 列表。
         target_lang: 目标语言。
         custom_prompt: 用户自定义 Prompt。
@@ -568,10 +499,37 @@ def _translate_batch(
 
     system_message = f"You are a professional game localization translator. Translate the text to {target_lang}."
 
-    for attempt in range(MAX_RETRIES):
+    member = source.acquire()
+    if member is None:
+        logger.error(
+            "[_translate_batch] 无可用 LLM 凭证 批次标记为失败 records_count %d",
+            len(records),
+        )
+        return {}
+    client = source.client_for(member)
+
+    tried: set = set()
+    switches = 0
+    transient_attempts = 0
+    total_attempts = 0
+    max_total_attempts = MAX_RETRIES + POOL_MAX_MEMBER_SWITCHES
+
+    def next_member(current: PoolMember) -> Optional[PoolMember]:
+        """换一个本批次还没试过的成员，不支持切换或已无成员可换时返回 None。
+
+        <p>supports_failover 的判断收在这里而不是散在每个分支：自带凭证与钉住成员的来源
+        都会无条件返回同一个成员，漏判就会「切换」到自己身上，把重试次数悄悄放大一倍。
+        """
+        if not source.supports_failover():
+            return None
+        tried.add(current.member_id)
+        return source.acquire(exclude=tried)
+
+    while total_attempts < max_total_attempts:
+        total_attempts += 1
         try:
             response = client.chat.completions.create(
-                model=model,
+                model=member.model,
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": prompt},
@@ -581,13 +539,16 @@ def _translate_batch(
             )
             choice = response.choices[0]
             response_text = choice.message.content or ""
-            _accumulate_usage(response, records, depth, usage)
+            prompt_tokens, completion_tokens, reasoning_tokens = _accumulate_usage(
+                response, records, depth, usage,
+            )
+            source.record_success(member, prompt_tokens, completion_tokens, reasoning_tokens)
 
             # 响应不完整时对半拆分重试 避免整批词条丢失
             if _should_split(choice, response_text, records, depth, budget):
+                # 钉在同一成员上：拆分决策是按它的输出上限做的，换成员会让判断失效
                 return _split_and_translate(
-                    client=client,
-                    model=model,
+                    source=source.pinned(member),
                     records=records,
                     target_lang=target_lang,
                     custom_prompt=custom_prompt,
@@ -608,28 +569,80 @@ def _translate_batch(
                     result[record.record_id] = _fix_br_tags(record.text, result[record.record_id])
             return result
 
-        except BadRequestError as e:
-            # 400 属参数或内容问题 重试不会变好 直接跳出省下两次无效请求和 3 秒退避
-            # 典型原因是 max_tokens 超出 provider 允许值、模型名不存在、prompt 触发内容过滤
-            logger.error(
-                "[_translate_batch] 请求被拒绝 不重试 records_count %d model %s error %s",
-                len(records), model, str(e),
-            )
-            break
-
         except Exception as e:
-            if attempt < MAX_RETRIES - 1:
-                delay = RETRY_DELAYS[attempt]
-                logger.warning(
-                    "[_translate_batch] LLM 调用失败 attempt %d/%d delay %ds error %s",
-                    attempt + 1, MAX_RETRIES, delay, str(e),
+            kind = classify_error(e)
+            source.record_failure(member, kind, str(e))
+
+            # 自带凭证没有成员可换：把非 400 一律按瞬时错误退避重试，
+            # 与池化改造前的行为保持一致，不让用户的任务因为一次限流就直接失败
+            if not source.supports_failover() and kind != ERROR_KIND_BAD_REQUEST:
+                kind = ERROR_KIND_TRANSIENT
+
+            if kind == ERROR_KIND_BAD_REQUEST:
+                # 400 多数是参数或内容问题（prompt 触发内容过滤、max_tokens 超限），重试不会变好。
+                # 但也可能是这个成员的模型名不存在——部分供应商对未知模型返回 400 而不是 404，
+                # 所以给一次换成员的机会来区分二者，代价封在一次额外请求
+                candidate = next_member(member) if switches < 1 else None
+                if candidate is not None:
+                    member = candidate
+                    client = source.client_for(member)
+                    switches += 1
+                    logger.warning(
+                        "[_translate_batch] 请求被拒绝 换一个成员确认是否为成员配置问题 member %s records_count %d error %s",
+                        member.name, len(records), str(e),
+                    )
+                    continue
+                logger.error(
+                    "[_translate_batch] 请求被拒绝 不重试 records_count %d model %s error %s",
+                    len(records), member.model, str(e),
                 )
-                time.sleep(delay)
-            else:
+                break
+
+            if kind == ERROR_KIND_TRANSIENT:
+                transient_attempts += 1
+                if transient_attempts < MAX_RETRIES and total_attempts < max_total_attempts:
+                    delay = RETRY_DELAYS[min(transient_attempts - 1, len(RETRY_DELAYS) - 1)]
+                    logger.warning(
+                        "[_translate_batch] LLM 调用失败 attempt %d/%d delay %ds member %s error %s",
+                        transient_attempts, MAX_RETRIES, delay, member.name, str(e),
+                    )
+                    time.sleep(delay)
+                    continue
+                candidate = next_member(member) if switches < POOL_MAX_MEMBER_SWITCHES else None
+                if candidate is not None:
+                    member = candidate
+                    client = source.client_for(member)
+                    switches += 1
+                    transient_attempts = 0
+                    logger.warning(
+                        "[_translate_batch] 同成员重试耗尽 切换成员继续 member %s records_count %d",
+                        member.name, len(records),
+                    )
+                    continue
                 logger.error(
                     "[_translate_batch] LLM 调用重试耗尽 批次标记为失败 records_count %d error %s",
                     len(records), str(e),
                 )
+                break
+
+            # 限流、鉴权失效、余额不足、模型名不存在：成员级问题，不睡等直接换人
+            # 该成员已在 record_failure 里被冷却，后续批次不会再撞上它
+            candidate = next_member(member) if switches < POOL_MAX_MEMBER_SWITCHES else None
+            if candidate is not None:
+                previous = member.name
+                member = candidate
+                client = source.client_for(member)
+                switches += 1
+                logger.warning(
+                    "[_translate_batch] 成员不可用 切换成员继续 kind %s from %s to %s records_count %d",
+                    kind, previous, member.name, len(records),
+                )
+                continue
+            logger.error(
+                "[_translate_batch] 成员不可用且无成员可换 批次标记为失败 kind %s records_count %d error %s",
+                kind, len(records), str(e),
+            )
+            break
 
     return {}
 
@@ -694,6 +707,9 @@ def translate_records(
     根据文本总字符数动态分批 充分利用 LLM 上下文窗口。
     每批独立重试 失败的批次记录错误日志 不影响其他批次。
 
+    <p>凭证按批次而不是按任务选取：一个几十万词条的 mod 如果全压在同一个成员上，
+    等于没有分散成本，而分散成本正是池化的目的。
+
     Args:
         records: 待翻译的 StringRecord 列表。
         target_lang: 目标语言 默认 zh-CN。
@@ -704,7 +720,7 @@ def translate_records(
         max_batch_records: 每批最大记录数上限 默认取 LLM_MAX_BATCH_RECORDS 环境变量或 80。
         on_batch_done: 每完成一个 Batch 后的回调函数 参数为当前已翻译总数。
         on_batch_translated: 每完成一个 Batch 后的回调函数 参数为该批翻译结果和对应的原始记录。
-        llm_base_url: 自定义 LLM API 地址。
+        llm_base_url: 自定义 LLM API 地址 与 Key、模型名同时提供时走自带凭证。
         llm_api_key: 自定义 LLM API Key。
         llm_model: 自定义 LLM 模型名称。
         task_id: 任务 ID 仅用于用量日志关联。
@@ -725,8 +741,14 @@ def translate_records(
         task_id, len(records), len(batches), target_lang, max_batch_chars, max_batch_records,
     )
 
-    client = _get_client(llm_base_url, llm_api_key)
-    model = _get_model(llm_model)
+    source = _resolve_source(llm_base_url, llm_api_key, llm_model)
+    if source is None:
+        logger.error(
+            "[translate_records] 无可用 LLM 凭证 放弃翻译 task_id %s records_count %d",
+            task_id, len(records),
+        )
+        return {}
+
     all_translations: dict[str, str] = {}
 
     # 拆分额度按批次数的 2 倍给：正常任务只有零星批次需要拆分 用不到；
@@ -734,30 +756,33 @@ def translate_records(
     budget = SplitBudget(remaining=len(batches) * 2)
     usage = UsageTotals()
 
-    for batch_num, batch in enumerate(batches, 1):
-        batch_chars = sum(len(r.text) for r in batch)
-        logger.debug(
-            "[translate_records] 翻译批次 %d/%d records_count %d chars %d",
-            batch_num, len(batches), len(batch), batch_chars,
-        )
+    try:
+        for batch_num, batch in enumerate(batches, 1):
+            batch_chars = sum(len(r.text) for r in batch)
+            logger.debug(
+                "[translate_records] 翻译批次 %d/%d records_count %d chars %d",
+                batch_num, len(batches), len(batch), batch_chars,
+            )
 
-        batch_result = _translate_batch(
-            client=client,
-            model=model,
-            records=batch,
-            target_lang=target_lang,
-            custom_prompt=custom_prompt,
-            dictionary_entries=dictionary_entries,
-            budget=budget,
-            usage=usage,
-        )
-        all_translations.update(batch_result)
+            batch_result = _translate_batch(
+                source=source,
+                records=batch,
+                target_lang=target_lang,
+                custom_prompt=custom_prompt,
+                dictionary_entries=dictionary_entries,
+                budget=budget,
+                usage=usage,
+            )
+            all_translations.update(batch_result)
 
-        if on_batch_translated is not None and batch_result:
-            on_batch_translated(batch_result, batch)
+            if on_batch_translated is not None and batch_result:
+                on_batch_translated(batch_result, batch)
 
-        if on_batch_done is not None:
-            on_batch_done(len(all_translations))
+            if on_batch_done is not None:
+                on_batch_done(len(all_translations))
+    finally:
+        # 任务中途异常也要把已产生的成员用量交出去 否则这部分成本在分散度上不可见
+        source.flush()
 
     logger.info(
         "[translate_records] 翻译完成 task_id %s total %d translated %d missing %d split_budget_left %d",

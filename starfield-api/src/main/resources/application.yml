@@ -55,6 +55,19 @@ storage:
 prompt:
   max-length: ${PROMPT_MAX_LENGTH:10000}
 
+# 默认 LLM 凭证池配置
+llm:
+  pool:
+    # 用量滚动窗口天数。必须与引擎的 LLM_POOL_USAGE_WINDOW_DAYS 一致
+    # 否则管理页展示的用量分布不是调度实际依据的分布
+    usage-window-days: ${LLM_POOL_USAGE_WINDOW_DAYS:7}
+    # 种子导入：池为空且此处有 Key 时，启动时自动导入一条成员
+    # 池化改造上线用，导入完成后这三项即可从部署配置中移除
+    seed:
+      base-url: ${LLM_BASE_URL:}
+      api-key: ${LLM_API_KEY:}
+      model: ${LLM_MODEL:}
+
 # 腾讯云 COS 配置
 cos:
   secret-id: ${COS_SECRET_ID:}

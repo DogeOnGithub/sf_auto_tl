@@ -16,6 +16,7 @@ from engine.llm_client import (
     _translate_batch,
     translate_records,
 )
+from tests.llm_test_helpers import fixed_source
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +94,11 @@ class TestParseResponse:
 # ---------------------------------------------------------------------------
 
 class TestTranslateBatch:
-    """单批次翻译与重试逻辑测试。"""
+    """单批次翻译与重试逻辑测试。
+
+    <p>这里统一用 FixedSource（自带凭证语义）：它不做 failover，所以断言的正是
+    池化改造前那套「非 400 退避重试三次」的行为，用来兜住改造没有回归用户自带 KEY 的路径。
+    """
 
     def test_success_on_first_attempt(self):
         """首次调用成功时直接返回结果。"""
@@ -101,7 +106,7 @@ class TestTranslateBatch:
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(["翻译0", "翻译1"])
 
-        result = _translate_batch(client, "gpt-4o-mini", records, "zh-CN", None, None)
+        result = _translate_batch(fixed_source(client), records, "zh-CN", None, None)
 
         assert len(result) == 2
         assert result[records[0].record_id] == "翻译0"
@@ -118,7 +123,7 @@ class TestTranslateBatch:
             _mock_completion(["翻译0", "翻译1"]),
         ]
 
-        result = _translate_batch(client, "gpt-4o-mini", records, "zh-CN", None, None)
+        result = _translate_batch(fixed_source(client), records, "zh-CN", None, None)
 
         assert len(result) == 2
         assert client.chat.completions.create.call_count == 3
@@ -134,7 +139,7 @@ class TestTranslateBatch:
         client = MagicMock()
         client.chat.completions.create.side_effect = Exception("persistent error")
 
-        result = _translate_batch(client, "gpt-4o-mini", records, "zh-CN", None, None)
+        result = _translate_batch(fixed_source(client), records, "zh-CN", None, None)
 
         assert result == {}
         assert client.chat.completions.create.call_count == MAX_RETRIES
@@ -155,7 +160,7 @@ class TestTranslateBatch:
 
         with patch("engine.llm_client.build_prompt") as mock_build:
             mock_build.return_value = "mocked prompt"
-            _translate_batch(client, "gpt-4o-mini", records, "zh-CN", custom, entries)
+            _translate_batch(fixed_source(client), records, "zh-CN", custom, entries)
 
             mock_build.assert_called_once_with(
                 texts_to_translate=[records[0].text],
@@ -169,12 +174,34 @@ class TestTranslateBatch:
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(["翻译"])
 
-        _translate_batch(client, "gpt-4o-mini", records, "ja-JP", None, None)
+        _translate_batch(fixed_source(client), records, "ja-JP", None, None)
 
         call_args = client.chat.completions.create.call_args
         messages = call_args.kwargs.get("messages") or call_args[1].get("messages")
         system_msg = messages[0]["content"]
         assert "ja-JP" in system_msg
+
+    def test_uses_model_from_source(self):
+        """模型名取自来源里的成员 而不是再去读环境变量。"""
+        records = _make_records(1)
+        client = MagicMock()
+        client.chat.completions.create.return_value = _mock_completion(["翻译"])
+
+        _translate_batch(fixed_source(client, "member-model"), records, "zh-CN", None, None)
+
+        call_args = client.chat.completions.create.call_args
+        assert call_args.kwargs.get("model") == "member-model"
+
+    def test_no_credentials_returns_empty_without_calling_llm(self):
+        """来源给不出成员时直接判本批失败 不发请求。"""
+        records = _make_records(2)
+        source = MagicMock()
+        source.acquire.return_value = None
+
+        result = _translate_batch(source, records, "zh-CN", None, None)
+
+        assert result == {}
+        source.client_for.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -184,33 +211,30 @@ class TestTranslateBatch:
 class TestTranslateRecords:
     """translate_records 整体流程测试。"""
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
-    def test_empty_records_returns_empty(self, mock_model, mock_client):
-        """空记录列表直接返回空字典。"""
+    @patch("engine.llm_client._resolve_source")
+    def test_empty_records_returns_empty(self, mock_resolve):
+        """空记录列表直接返回空字典 连凭证都不去解析。"""
         result = translate_records([])
         assert result == {}
-        mock_client.assert_not_called()
+        mock_resolve.assert_not_called()
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
-    def test_single_batch(self, mock_model, mock_client):
+    @patch("engine.llm_client._resolve_source")
+    def test_single_batch(self, mock_resolve):
         """记录数 <= batch_size 时只调用一次 LLM。"""
         records = _make_records(3)
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(
             [f"翻译{i}" for i in range(3)]
         )
-        mock_client.return_value = client
+        mock_resolve.return_value = fixed_source(client)
 
         result = translate_records(records, batch_size=10)
 
         assert len(result) == 3
         assert client.chat.completions.create.call_count == 1
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
-    def test_multiple_batches(self, mock_model, mock_client):
+    @patch("engine.llm_client._resolve_source")
+    def test_multiple_batches(self, mock_resolve):
         """记录数 > max_batch_records 时应分多批调用。"""
         records = _make_records(5)
         client = MagicMock()
@@ -220,7 +244,7 @@ class TestTranslateRecords:
             _mock_completion(["翻译2", "翻译3"]),
             _mock_completion(["翻译4"]),
         ]
-        mock_client.return_value = client
+        mock_resolve.return_value = fixed_source(client)
 
         result = translate_records(records, max_batch_records=2)
 
@@ -229,10 +253,9 @@ class TestTranslateRecords:
         for r in records:
             assert r.record_id in result
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
+    @patch("engine.llm_client._resolve_source")
     @patch("engine.llm_client.time.sleep")
-    def test_partial_batch_failure(self, mock_sleep, mock_model, mock_client):
+    def test_partial_batch_failure(self, mock_sleep, mock_resolve):
         """部分批次失败不影响其他批次。"""
         records = _make_records(4)
         client = MagicMock()
@@ -243,7 +266,7 @@ class TestTranslateRecords:
             Exception("fail"),
             Exception("fail"),
         ]
-        mock_client.return_value = client
+        mock_resolve.return_value = fixed_source(client)
 
         result = translate_records(records, max_batch_records=2)
 
@@ -251,14 +274,13 @@ class TestTranslateRecords:
         assert records[0].record_id in result
         assert records[1].record_id in result
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="gpt-4o-mini")
-    def test_default_target_lang(self, mock_model, mock_client):
+    @patch("engine.llm_client._resolve_source")
+    def test_default_target_lang(self, mock_resolve):
         """默认目标语言应为 zh-CN。"""
         records = _make_records(1)
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(["翻译"])
-        mock_client.return_value = client
+        mock_resolve.return_value = fixed_source(client)
 
         translate_records(records)
 
@@ -267,19 +289,37 @@ class TestTranslateRecords:
         system_msg = messages[0]["content"]
         assert "zh-CN" in system_msg
 
-    @patch("engine.llm_client._get_client")
-    @patch("engine.llm_client._get_model", return_value="test-model")
-    def test_uses_configured_model(self, mock_model, mock_client):
-        """应使用环境变量配置的模型名称。"""
+    @patch("engine.llm_client._resolve_source")
+    def test_uses_model_from_resolved_source(self, mock_resolve):
+        """应使用来源里成员携带的模型名称。"""
         records = _make_records(1)
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion(["翻译"])
-        mock_client.return_value = client
+        mock_resolve.return_value = fixed_source(client, "test-model")
 
         translate_records(records)
 
         call_args = client.chat.completions.create.call_args
-        assert call_args.kwargs.get("model") == "test-model" or call_args[1].get("model") == "test-model"
+        assert call_args.kwargs.get("model") == "test-model"
+
+    @patch("engine.llm_client._resolve_source", return_value=None)
+    def test_no_credentials_returns_empty(self, mock_resolve):
+        """无可用凭证时直接返回空 让上层的零产出熔断把任务判失败。"""
+        result = translate_records(_make_records(2))
+        assert result == {}
+
+    @patch("engine.llm_client._resolve_source")
+    def test_flushes_usage_even_when_batch_raises(self, mock_resolve):
+        """任务中途异常也要把已产生的成员用量交出去 否则这部分成本在分散度上不可见。"""
+        records = _make_records(2)
+        source = MagicMock()
+        source.acquire.side_effect = RuntimeError("boom")
+        mock_resolve.return_value = source
+
+        with pytest.raises(RuntimeError):
+            translate_records(records)
+
+        source.flush.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

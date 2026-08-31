@@ -5,6 +5,7 @@ import com.starfield.api.dto.ErrorResponse;
 import com.starfield.api.service.DictionaryService;
 import com.starfield.api.service.DownloadService;
 import com.starfield.api.service.FileUploadService;
+import com.starfield.api.service.LlmPoolService;
 import com.starfield.api.service.PromptService;
 import com.starfield.api.service.TaskService;
 import com.starfield.api.service.CreationService;
@@ -225,6 +226,50 @@ public class GlobalExceptionHandler {
         log.warn("[handleInvalidTaskState] {}", e.getMessage());
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("INVALID_TASK_STATE", e.getMessage()));
+    }
+
+    /**
+     * 处理池成员配置非法异常
+     */
+    @ExceptionHandler(LlmPoolService.InvalidPoolMemberException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidPoolMember(LlmPoolService.InvalidPoolMemberException e) {
+        log.warn("[handleInvalidPoolMember] {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse("INVALID_POOL_MEMBER", e.getMessage()));
+    }
+
+    /**
+     * 处理池成员名重复异常
+     */
+    @ExceptionHandler(LlmPoolService.DuplicateMemberNameException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateMemberName(LlmPoolService.DuplicateMemberNameException e) {
+        log.warn("[handleDuplicateMemberName] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("DUPLICATE_POOL_MEMBER_NAME", "成员名已存在，请换一个"));
+    }
+
+    /**
+     * 处理池成员不存在异常
+     */
+    @ExceptionHandler(LlmPoolService.MemberNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handlePoolMemberNotFound(LlmPoolService.MemberNotFoundException e) {
+        log.warn("[handlePoolMemberNotFound] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("POOL_MEMBER_NOT_FOUND", "池成员不存在"));
+    }
+
+    /**
+     * 处理默认额度不可用异常
+     *
+     * <p>用 409 而不是 503：这不是服务故障而是前置条件不满足，用户改用自带 KEY 立刻就能继续，
+     * 前端需要把 message 原样提示出来引导操作。
+     */
+    @ExceptionHandler(LlmPoolService.PoolUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handlePoolUnavailable(LlmPoolService.PoolUnavailableException e) {
+        log.warn("[handlePoolUnavailable] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("LLM_POOL_UNAVAILABLE",
+                        "默认额度当前不可用，请在上传时打开「用我的 KEY」并填写你自己的 API 地址、API Key 和模型名称"));
     }
 
 

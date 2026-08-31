@@ -36,6 +36,26 @@ public interface EngineClient {
      */
     EngineAssemblyResponse submitAssembly(EngineAssemblyRequest request);
 
+    /**
+     * 查询默认凭证池各成员在引擎进程内的实时健康状态
+     *
+     * <p>冷却状态只存在于引擎内存里，不落库，所以管理页要展示「当前是否可用」必须回源问引擎。
+     *
+     * @return 各成员的实时健康状态
+     */
+    EnginePoolHealthResponse getPoolHealth();
+
+    /**
+     * 让引擎用给定凭证打一次极小的补全请求，验证配置可用
+     *
+     * <p>放在引擎侧而不是 Java 直连 LLM，是为了复用引擎的 base_url 规整与客户端构造，
+     * 让测试走的是和真实翻译完全相同的路径。
+     *
+     * @param request 待验证的凭证
+     * @return 验证结果
+     */
+    EnginePoolTestResponse testPoolMember(EnginePoolTestRequest request);
+
 
     record EngineTranslateRequest(
             String taskId,
@@ -93,6 +113,30 @@ public interface EngineClient {
     record EngineAssemblyResponse(
             String taskId,
             String status
+    ) {}
+
+    record EnginePoolHealthResponse(
+            List<EnginePoolMemberHealth> members
+    ) {}
+
+    record EnginePoolMemberHealth(
+            Long memberId,
+            Boolean available,
+            Long cooldownRemainingSeconds,
+            String lastErrorKind,
+            String lastErrorMessage
+    ) {}
+
+    record EnginePoolTestRequest(
+            String baseUrl,
+            String apiKey,
+            String model
+    ) {}
+
+    record EnginePoolTestResponse(
+            Boolean success,
+            String message,
+            Long latencyMs
     ) {}
 
 }

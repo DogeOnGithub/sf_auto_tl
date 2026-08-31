@@ -95,4 +95,44 @@ public class EngineClientImpl implements EngineClient {
         }
     }
 
+    /**
+     * 查询默认凭证池各成员在引擎进程内的实时健康状态
+     */
+    @Override
+    public EnginePoolHealthResponse getPoolHealth() {
+        var url = engineBaseUrl + "/engine/pool";
+        log.debug("[getPoolHealth] 查询池健康状态");
+        try {
+            return restTemplate.getForObject(url, EnginePoolHealthResponse.class);
+        } catch (ResourceAccessException e) {
+            log.warn("[getPoolHealth] 翻译引擎不可用 url {}", url);
+            throw new EngineUnavailableException("翻译引擎不可用", e);
+        } catch (Exception e) {
+            log.warn("[getPoolHealth] 查询池健康状态异常 url {}", url, e);
+            throw new EngineUnavailableException("查询池健康状态异常", e);
+        }
+    }
+
+    /**
+     * 让引擎用给定凭证打一次极小的补全请求，验证配置可用
+     *
+     * <p>异常不外抛为 EngineUnavailableException：调用方要区分「引擎挂了」和「这套凭证不可用」，
+     * 后者是测试按钮的正常结果而不是系统故障，所以统一收敛成 success=false 的结果对象。
+     * 日志里不打 request 内容，它带明文 Key。
+     */
+    @Override
+    public EnginePoolTestResponse testPoolMember(EnginePoolTestRequest request) {
+        var url = engineBaseUrl + "/engine/pool/test";
+        log.info("[testPoolMember] 请求引擎验证凭证 model {}", request.model());
+        try {
+            return restTemplate.postForObject(url, request, EnginePoolTestResponse.class);
+        } catch (ResourceAccessException e) {
+            log.warn("[testPoolMember] 翻译引擎不可用 url {}", url);
+            return new EnginePoolTestResponse(false, "翻译引擎不可用 无法执行验证", 0L);
+        } catch (Exception e) {
+            log.warn("[testPoolMember] 调用引擎验证接口异常 url {}", url, e);
+            return new EnginePoolTestResponse(false, "调用引擎验证接口异常 " + e.getMessage(), 0L);
+        }
+    }
+
 }

@@ -15,10 +15,11 @@ from engine.glossary_extractor import extract_glossary
 from engine.llm_client import (
     DEFAULT_MAX_BATCH_CHARS,
     DEFAULT_MAX_BATCH_RECORDS,
-    _env_int,
     _split_batches,
     translate_records,
 )
+from engine.llm_config import MAX_ENTRIES_WITHOUT_OWN_KEY
+from engine.llm_pool import get_pool
 from engine.strings_parser import parse_strings_dir
 from engine.strings_writer import write_strings_dir
 
@@ -33,13 +34,6 @@ GLOSSARY_MIN_BATCHES = 2
 
 # 译文产出率低于此比例时告警 但不熔断
 LOW_YIELD_WARN_RATE = 0.5
-
-# 使用引擎兜底 KEY 时允许翻译的词条上限 超过则必须自带 API 地址和 KEY
-# 兜底 KEY 是所有没填自己配置的用户共用的，一个几十万词条的 mod 一次就能把余额抽干，
-# 之后所有人的任务都只能拿到 402。线上出过一次：同一个 30 万词条的 mod 被反复提交 7 次，
-# 且都是 confirmation 模式（skip_cache=True 不写缓存），每次都按原价重算，两小时烧完余额。
-# 上限只约束兜底 KEY：用户自带 KEY 时花的是自己的钱，不设限。
-MAX_ENTRIES_WITHOUT_OWN_KEY = _env_int("MAX_ENTRIES_WITHOUT_OWN_KEY", 100000)
 
 # 翻译来源类型
 SOURCE_TYPE_ESM = "esm"
@@ -60,27 +54,33 @@ VALID_STATUSES = frozenset({
 })
 
 
-def _has_own_llm_credentials(llm_base_url: str | None, llm_api_key: str | None) -> bool:
+def _has_own_llm_credentials(
+    llm_base_url: str | None,
+    llm_api_key: str | None,
+    llm_model: str | None,
+) -> bool:
     """判断调用方是否自带了完整的 LLM 凭证。
 
-    <p>判空用 truthy + strip 而不是 `is None`：llm_client._get_client 里的 fallback 写法是
-    `api_key or os.environ.get("LLM_API_KEY")`，空串同样会落回兜底 KEY。若这里用 `is None`
-    判定，传空串就能绕过词条上限继续烧兜底余额。
+    <p>判空用 truthy + strip 而不是 `is None`：空串在下游一样会被当成「没提供」而落回默认池。
+    若这里用 `is None` 判定，传空串就能绕过词条上限继续烧公共额度。
 
-    <p>要求 base_url 和 key 同时具备。只填 key 不填 base_url 时会打到兜底的 base_url 上，
-    只填 base_url 不填 key 则直接用兜底 KEY 打到用户地址上，两种都不是「完全自费」。
+    <p>要求地址、Key、模型名三项同时具备，口径必须和 llm_client._resolve_source 完全一致。
+    只要有一项缺失，_resolve_source 就会回落到默认凭证池，那时花的是公共额度而不是用户自己的钱；
+    如果这里只校验两项，调用方就能靠「填地址和 Key、不填模型名」绕过词条上限去消耗公共池。
     前端开启「用我的 KEY」时三项都是必填，所以这里主要防御绕过前端直连 API 的调用。
 
     Args:
         llm_base_url: 调用方传入的 LLM API 地址。
         llm_api_key: 调用方传入的 LLM API Key。
+        llm_model: 调用方传入的模型名称。
 
     Returns:
-        两者都非空返回 True。
+        三者都非空返回 True。
     """
     has_base_url = bool(llm_base_url and llm_base_url.strip())
     has_api_key = bool(llm_api_key and llm_api_key.strip())
-    return has_base_url and has_api_key
+    has_model = bool(llm_model and llm_model.strip())
+    return has_base_url and has_api_key and has_model
 
 
 def _parse_source(source_type: str, file_path: str):
@@ -308,8 +308,24 @@ class Translator:
         enable_glossary_extraction: bool = True,
         source_type: str = SOURCE_TYPE_ESM,
     ) -> None:
-        """执行翻译任务的完整流程：解析 → 词条数护栏 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
+        """执行翻译任务的完整流程：凭证护栏 → 解析 → 词条数护栏 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
         try:
+            # 0.5 默认额度可用性护栏
+            # 卡在解析之前：不依赖词条数就能判定，而文件最大 4GB，先解析再失败等于白等几分钟。
+            # Java 侧在上传入口已经拦过一次，这里兜住绕过前端直连引擎的调用，
+            # 以及上传成功之后管理员把成员全部停用的时序。
+            # 只看配置层面有没有成员，成员全在冷却是暂时状态，交给 acquire 自己挑冷却最短的去试。
+            if not _has_own_llm_credentials(llm_base_url, llm_api_key, llm_model):
+                if get_pool().refresh() == 0:
+                    logger.error("[_run_task] 默认凭证池为空 拒绝翻译 task_id %s", task_id)
+                    self._set_error(
+                        task_id,
+                        "默认额度当前不可用 请在上传时打开「用我的 KEY」"
+                        "并填写你自己的 API 地址、API Key 和模型名称后重新提交",
+                    )
+                    self._report_progress(task_id, callback_url)
+                    return
+
             # 1. 解析 ESM 或 Strings 目录
             self._update_status(task_id, STATUS_PARSING)
             self._report_progress(task_id, callback_url)
@@ -324,13 +340,14 @@ class Translator:
                 self._report_progress(task_id, callback_url)
                 return
 
-            # 1.5 兜底 KEY 的词条数护栏
+            # 1.5 公共额度的词条数护栏
             # 必须卡在这里：往下第一个花钱的动作是术语提取（步骤 2.5），而它被 try/except
             # 包着降级，异常会被吞掉拦不住任务。放在解析拿到 total 之后、缓存查询之前，
             # 既保证零付费调用，也省掉一次几十万词条的缓存查询请求。
-            if total > MAX_ENTRIES_WITHOUT_OWN_KEY and not _has_own_llm_credentials(llm_base_url, llm_api_key):
+            # 池化之后被抽干的是整个池而不是单个 KEY，所以这个上限照旧生效、不随成员数放大。
+            if total > MAX_ENTRIES_WITHOUT_OWN_KEY and not _has_own_llm_credentials(llm_base_url, llm_api_key, llm_model):
                 logger.warning(
-                    "[_run_task] 词条数超过兜底 KEY 上限且未自带凭证 拒绝翻译 task_id %s total %d limit %d",
+                    "[_run_task] 词条数超过公共额度上限且未自带凭证 拒绝翻译 task_id %s total %d limit %d",
                     task_id, total, MAX_ENTRIES_WITHOUT_OWN_KEY,
                 )
                 self._set_error(

@@ -43,6 +43,7 @@ public class FileUploadService {
     final PromptService promptService;
     final DictionaryEntryRepository dictionaryEntryRepository;
     final EngineClient engineClient;
+    final LlmPoolService llmPoolService;
 
     @Value("${storage.upload-dir:./uploads}")
     private String uploadDir;
@@ -88,6 +89,7 @@ public class FileUploadService {
         var fileName = file.getOriginalFilename();
         log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {} llmModel {}", fileName, creationVersionId, confirmationMode, llmModel);
 
+        requireDefaultQuotaAvailable(llmBaseUrl, llmApiKey, llmModel);
         validateEsmFormat(file);
 
         var resolvedPrompt = resolvePrompt(promptId, newPromptName, newPromptContent);
@@ -134,6 +136,7 @@ public class FileUploadService {
         var zipName = file.getOriginalFilename();
         log.info("[uploadStrings] 开始处理 Strings 上传 zipName {} creationVersionId {} confirmationMode {} llmModel {}", zipName, creationVersionId, confirmationMode, llmModel);
 
+        requireDefaultQuotaAvailable(llmBaseUrl, llmApiKey, llmModel);
         var taskId = UUID.randomUUID().toString();
         var extracted = extractAndValidateStrings(file, taskId);
 
@@ -391,6 +394,48 @@ public class FileUploadService {
         task.setFilePath(filePath.toString());
         task.setStatus(TaskStatus.waiting);
         return task;
+    }
+
+    /**
+     * 未自带凭证时校验默认凭证池仍有可用成员
+     *
+     * <p>卡在上传入口而不是等引擎判定：文件最大 4GB，等传完再由引擎在解析阶段失败，
+     * 用户要白等几分钟才知道配置层面根本没额度可用。这里提前拦掉，提示直接引导去开「用我的 KEY」。
+     *
+     * <p>只看配置层面有没有启用成员。成员全部正在冷却是引擎侧的瞬时状态，不在这里拦，
+     * 否则会把「几分钟后自然恢复」误判成「请自带 KEY」。
+     *
+     * <p>判空口径与引擎的 _has_own_llm_credentials 保持一致：地址、Key、模型名三项必须同时非空
+     * 才算自带。缺任何一项引擎都会回落到默认凭证池，那时花的是公共额度而不是用户自己的钱；
+     * 如果这里只校验其中两项，「填地址和 Key、不填模型名」就是一条绕过池校验去消耗公共额度的路径。
+     *
+     * @param llmBaseUrl 用户填写的 LLM API 地址
+     * @param llmApiKey  用户填写的 LLM API Key
+     * @param llmModel   用户填写的模型名称
+     * @throws LlmPoolService.PoolUnavailableException 未自带完整凭证且池中无启用成员
+     */
+    private void requireDefaultQuotaAvailable(String llmBaseUrl, String llmApiKey, String llmModel) {
+        var hasOwnCredentials = isPresent(llmBaseUrl) && isPresent(llmApiKey) && isPresent(llmModel);
+        if (hasOwnCredentials) {
+            return;
+        }
+        if (!llmPoolService.hasEnabledMember()) {
+            log.warn("[requireDefaultQuotaAvailable] 未自带完整凭证且默认凭证池无启用成员 拒绝上传");
+            throw new LlmPoolService.PoolUnavailableException();
+        }
+    }
+
+    /**
+     * 判断字符串非空且非空白
+     *
+     * <p>空白串必须等同于没提供：引擎侧的判空同样用 strip 口径，
+     * 若这里只判 null，传几个空格就能骗过「自带凭证」的判定。
+     *
+     * @param value 待判断的值
+     * @return 非空且含非空白字符返回 true
+     */
+    private boolean isPresent(String value) {
+        return Objects.nonNull(value) && !value.isBlank();
     }
 
     /**

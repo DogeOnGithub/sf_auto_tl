@@ -9,32 +9,21 @@ import re
 import time
 from typing import Optional
 
-from openai import BadRequestError
-
 from engine.esm_parser import StringRecord
-# 复用 llm_client 的客户端构造、超时与可选参数 保持整个引擎对 LLM 的约束口径一致
-from engine.llm_client import (
+# 复用 llm_client 的可选参数组装与用量解析、凭证来源解析 保持整个引擎对 LLM 的约束口径一致
+from engine.llm_client import _accumulate_usage, _completion_kwargs, _resolve_source
+from engine.llm_config import (
+    DEFAULT_GLOSSARY_MAX_CHARS,
+    MAX_GLOSSARY_TERMS,
+    MAX_RETRIES,
+    MIN_GLOSSARY_MAX_CHARS,
+    POOL_MAX_MEMBER_SWITCHES,
     REQUEST_TIMEOUT,
-    _completion_kwargs,
-    _env_int,
-    _get_client,
-    _get_model,
+    RETRY_DELAYS,
 )
+from engine.llm_pool import ERROR_KIND_BAD_REQUEST, ERROR_KIND_TRANSIENT, PoolMember, classify_error
 
 logger = logging.getLogger(__name__)
-
-# 术语表返回条数上限
-# 术语表最终会被合并进词典并按批过滤下发 一个 Mod 有一两百条专有名词已经足够；
-# 不设上限时模型可能吐出上千条 输出必然被截断 而截断的 JSON 解析必然失败 等于白花钱
-MAX_GLOSSARY_TERMS = _env_int("LLM_GLOSSARY_MAX_TERMS", 150)
-
-# 术语提取的采样字符数上限
-# 原来是 200000 字符 约 5 万 input token 在 32k 上下文的模型上直接超限 且单次调用很贵
-# 6 万字符约 1.5 万 input token 对绝大多数模型都安全 均匀采样下覆盖面依然够用
-DEFAULT_GLOSSARY_MAX_CHARS = _env_int("LLM_GLOSSARY_MAX_CHARS", 60000)
-
-# 采样缩减的下限 低于此值不再继续缩小 直接放弃本次提取
-MIN_GLOSSARY_MAX_CHARS = 5000
 
 
 def _build_extraction_prompt(texts: list[str], target_lang: str) -> str:
@@ -215,11 +204,6 @@ def _sample_texts(records: list[StringRecord], max_chars: int) -> list[str]:
     return sampled
 
 
-# 重试配置
-MAX_RETRIES = 3
-RETRY_DELAYS = [1, 2, 4]  # 指数退避间隔（秒）
-
-
 def extract_glossary(
     records: list[StringRecord],
     target_lang: str = "zh-CN",
@@ -270,18 +254,43 @@ def extract_glossary(
     # 2. 构建 Prompt
     prompt = _build_extraction_prompt(sampled_texts, target_lang)
 
-    # 3. 创建 OpenAI 客户端（直接复用 llm_client 的构造 含 base_url 规整与 max_retries=0）
-    client = _get_client(llm_base_url, llm_api_key)
-    model = _get_model(llm_model)
+    # 3. 解析凭证来源（自带 KEY 走 FixedSource 否则走默认凭证池）
+    source = _resolve_source(llm_base_url, llm_api_key, llm_model)
+    if source is None:
+        logger.warning("[extract_glossary] 无可用 LLM 凭证 跳过术语提取")
+        return []
+    member = source.acquire()
+    if member is None:
+        logger.warning("[extract_glossary] 无可用池成员 跳过术语提取")
+        return []
+    client = source.client_for(member)
 
-    # 4. 调用 LLM 提取术语（含重试逻辑）
+    # 4. 调用 LLM 提取术语（含错误分类、成员切换与截断缩采样）
     system_message = "You are a professional game localization terminology expert."
     current_max_chars = max_chars
 
-    for attempt in range(MAX_RETRIES):
+    tried: set = set()
+    switches = 0
+    transient_attempts = 0
+    total_attempts = 0
+    max_total_attempts = MAX_RETRIES + POOL_MAX_MEMBER_SWITCHES
+
+    def next_member(current: PoolMember) -> Optional[PoolMember]:
+        """换一个还没试过的成员，不支持切换或已无成员可换时返回 None。
+
+        <p>supports_failover 的判断收在这里：自带凭证的来源会无条件返回同一个成员，
+        漏判就会「切换」到自己身上，把重试次数悄悄放大一倍。
+        """
+        if not source.supports_failover():
+            return None
+        tried.add(current.member_id)
+        return source.acquire(exclude=tried)
+
+    while total_attempts < max_total_attempts:
+        total_attempts += 1
         try:
             response = client.chat.completions.create(
-                model=model,
+                model=member.model,
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": prompt},
@@ -291,6 +300,10 @@ def extract_glossary(
             )
             choice = response.choices[0]
             response_text = choice.message.content or ""
+            prompt_tokens, completion_tokens, reasoning_tokens = _accumulate_usage(
+                response, records, 0, None,
+            )
+            source.record_success(member, prompt_tokens, completion_tokens, reasoning_tokens)
 
             # 4.5 输出被截断时缩小采样重试 截断的 JSON 解析必然失败
             if getattr(choice, "finish_reason", None) == "length":
@@ -299,8 +312,8 @@ def extract_glossary(
                     logger.warning(
                         "[extract_glossary] 术语表被输出上限截断 缩小采样重试 new_max_chars %d attempt %d/%d",
                         current_max_chars,
-                        attempt + 1,
-                        MAX_RETRIES,
+                        total_attempts,
+                        max_total_attempts,
                     )
                     sampled_texts = _sample_texts(records, current_max_chars)
                     prompt = _build_extraction_prompt(sampled_texts, target_lang)
@@ -320,31 +333,59 @@ def extract_glossary(
 
             return glossary
 
-        except BadRequestError as e:
-            # 400 属参数或内容问题 重试不会变好 直接放弃 术语提取本身是可降级的
+        except Exception as e:
+            kind = classify_error(e)
+            source.record_failure(member, kind, str(e))
+
+            # 自带凭证没有成员可换 非 400 一律按瞬时错误退避重试 与改造前一致
+            if not source.supports_failover() and kind != ERROR_KIND_BAD_REQUEST:
+                kind = ERROR_KIND_TRANSIENT
+
+            if kind == ERROR_KIND_BAD_REQUEST:
+                # 400 属参数或内容问题 重试不会变好 直接放弃 术语提取本身是可降级的
+                # 这里不像翻译那样再换个成员试：术语表缺失只是少了译名统一约束 不值得为它多付一次请求
+                logger.warning(
+                    "[extract_glossary] 请求被拒绝 不重试 返回空术语表 model %s error %s",
+                    member.model,
+                    str(e),
+                )
+                return []
+
+            if kind == ERROR_KIND_TRANSIENT:
+                transient_attempts += 1
+                if transient_attempts < MAX_RETRIES and total_attempts < max_total_attempts:
+                    delay = RETRY_DELAYS[min(transient_attempts - 1, len(RETRY_DELAYS) - 1)]
+                    logger.warning(
+                        "[extract_glossary] LLM 调用失败 attempt %d/%d delay %ds error %s",
+                        transient_attempts,
+                        MAX_RETRIES,
+                        delay,
+                        str(e),
+                    )
+                    time.sleep(delay)
+                    continue
+
+            # 瞬时错误重试耗尽 或成员级错误（限流、鉴权、余额、模型名）：换成员
+            candidate = next_member(member) if switches < POOL_MAX_MEMBER_SWITCHES else None
+            if candidate is not None:
+                member = candidate
+                client = source.client_for(member)
+                switches += 1
+                transient_attempts = 0
+                logger.warning(
+                    "[extract_glossary] 切换池成员重试术语提取 kind %s member %s",
+                    kind,
+                    member.name,
+                )
+                continue
+
             logger.warning(
-                "[extract_glossary] 请求被拒绝 不重试 返回空术语表 model %s error %s",
-                model,
+                "[extract_glossary] LLM 调用失败且无成员可换 返回空术语表 kind %s records_count %d error %s",
+                kind,
+                len(records),
                 str(e),
             )
             return []
 
-        except Exception as e:
-            if attempt < MAX_RETRIES - 1:
-                delay = RETRY_DELAYS[attempt]
-                logger.warning(
-                    "[extract_glossary] LLM 调用失败 attempt %d/%d delay %ds error %s",
-                    attempt + 1,
-                    MAX_RETRIES,
-                    delay,
-                    str(e),
-                )
-                time.sleep(delay)
-            else:
-                logger.warning(
-                    "[extract_glossary] LLM 调用重试耗尽 返回空术语表 records_count %d error %s",
-                    len(records),
-                    str(e),
-                )
-
+    logger.warning("[extract_glossary] 尝试次数用尽 返回空术语表 records_count %d", len(records))
     return []

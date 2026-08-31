@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from flask import Flask, jsonify, request
 
+from engine.llm_pool import build_client, classify_error, get_pool
+from engine.llm_config import REQUEST_TIMEOUT
 from engine.translator import Translator
 
 logger = logging.getLogger(__name__)
 
 translator = Translator()
+
+# 连通性验证用的极小请求参数：只要能拿到一次正常响应就说明地址、Key、模型名三者都对
+# 不复用翻译的 prompt 是为了把验证成本压到几乎为零
+_TEST_MAX_TOKENS = 16
+_TEST_TIMEOUT = 30
 
 
 def create_app() -> Flask:
@@ -102,6 +110,65 @@ def create_app() -> Flask:
             source_type=source_type,
         )
         return jsonify(result), 202
+
+    @app.get("/engine/pool")
+    def get_pool_health():
+        """返回默认凭证池各成员的实时健康状态。
+
+        <p>冷却状态只存在于本进程内存里，管理页要展示「当前是否可用」只能回源问引擎。
+        响应不含任何凭证。
+        """
+        return jsonify({"members": get_pool().health_snapshot()}), 200
+
+    @app.post("/engine/pool/test")
+    def test_pool_member():
+        """用给定凭证打一次极小的补全请求，验证配置可用。
+
+        <p>验证放在引擎侧而不是让 Java 直连 LLM：只有走这里才会复用 build_client 的
+        base_url 规整和客户端构造，测出来的结果才和真实翻译走同一条路径。线上出过
+        base_url 误填成完整端点导致全部调用 404、却因失败批次静默回退原文而显示
+        「翻译完成」的事故，这个接口就是为了让那类配置错误在配置阶段就暴露。
+
+        <p>凭证不可用属于正常的验证结果而不是接口错误，所以统一返回 200 + success=false。
+        日志不打请求体，它带明文 Key。
+        """
+        data = request.get_json(silent=True)
+        if data is None:
+            return jsonify({"error": "INVALID_REQUEST", "message": "请求体必须为 JSON"}), 400
+
+        base_url = data.get("baseUrl")
+        api_key = data.get("apiKey")
+        model = data.get("model")
+        if not base_url or not api_key or not model:
+            return jsonify({"error": "MISSING_PARAMS", "message": "baseUrl、apiKey 和 model 为必填参数"}), 400
+
+        logger.info("[test_pool_member] 开始验证凭证 model %s", model)
+        started = time.monotonic()
+        try:
+            client = build_client(base_url, api_key)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=_TEST_MAX_TOKENS,
+                timeout=_TEST_TIMEOUT,
+            )
+            latency_ms = int((time.monotonic() - started) * 1000)
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+            logger.info("[test_pool_member] 验证通过 model %s latency_ms %d", model, latency_ms)
+            return jsonify({
+                "success": True,
+                "message": f"调用成功 finish_reason {finish_reason}",
+                "latencyMs": latency_ms,
+            }), 200
+        except Exception as e:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            kind = classify_error(e)
+            logger.warning("[test_pool_member] 验证失败 model %s kind %s error %s", model, kind, str(e))
+            return jsonify({
+                "success": False,
+                "message": f"{kind} {str(e)}"[:500],
+                "latencyMs": latency_ms,
+            }), 200
 
     return app
 

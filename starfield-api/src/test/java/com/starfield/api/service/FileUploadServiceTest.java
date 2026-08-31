@@ -44,6 +44,9 @@ class FileUploadServiceTest {
     @Mock
     EngineClient engineClient;
 
+    @Mock
+    LlmPoolService llmPoolService;
+
     @InjectMocks
     FileUploadService fileUploadService;
 
@@ -54,6 +57,63 @@ class FileUploadServiceTest {
     void setUp() {
         ReflectionTestUtils.setField(fileUploadService, "uploadDir", tempDir.toString());
         ReflectionTestUtils.setField(fileUploadService, "apiBaseUrl", "http://localhost:8080");
+        // 默认让凭证池有可用成员：池空护栏是上传的第一道检查，不 stub 的话所有用例都会先在这里失败，
+        // 而它们测的是 Prompt 解析、文件存储这些与凭证无关的逻辑。用 lenient 是因为不走 upload 的用例碰不到它
+        lenient().when(llmPoolService.hasEnabledMember()).thenReturn(true);
+    }
+
+    /** 未自带凭证且凭证池无启用成员时应拒绝上传，且不落库不提交引擎 */
+    @Test
+    void upload_withoutOwnCredentialsAndEmptyPool_isRejected() {
+        when(llmPoolService.hasEnabledMember()).thenReturn(false);
+        var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", createEsmContent());
+
+        assertThatThrownBy(() -> fileUploadService.upload(file, null, null, null, null, null, null, null, null))
+                .isInstanceOf(LlmPoolService.PoolUnavailableException.class);
+
+        verify(translationTaskRepository, never()).insert(any(TranslationTask.class));
+        verify(engineClient, never()).submitTranslation(any());
+    }
+
+    /** 自带完整凭证时不受凭证池状态影响，池空也照样能上传 */
+    @Test
+    void upload_withOwnCredentialsAndEmptyPool_isAccepted() throws IOException {
+        // 不 stub hasEnabledMember：自带完整凭证时根本不该去问池，多余的 stub 反而会被严格模式判失败
+        when(dictionaryEntryRepository.selectList(isNull())).thenReturn(List.of());
+        var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", createEsmContent());
+
+        var response = fileUploadService.upload(file, null, null, null, null, null,
+                "https://my.api.com", "sk-mine", "my-model");
+
+        assertThat(response.taskId()).isNotBlank();
+        verify(translationTaskRepository).insert(any(TranslationTask.class));
+    }
+
+    /**
+     * 只填地址和 KEY、不填模型名不算自带凭证，池空时同样被拒绝
+     *
+     * <p>判空口径必须和引擎的 _resolve_source 一致：缺模型名时引擎会回落到默认池，
+     * 若这里放行就等于给了一条绕过池校验去消耗公共额度的路径。
+     */
+    @Test
+    void upload_withoutModelIsNotOwnCredentials_isRejected() {
+        when(llmPoolService.hasEnabledMember()).thenReturn(false);
+        var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", createEsmContent());
+
+        assertThatThrownBy(() -> fileUploadService.upload(file, null, null, null, null, null,
+                "https://my.api.com", "sk-mine", null))
+                .isInstanceOf(LlmPoolService.PoolUnavailableException.class);
+    }
+
+    /** 空白 KEY 等同于没提供，池空时被拒绝 */
+    @Test
+    void upload_withBlankKey_isRejected() {
+        when(llmPoolService.hasEnabledMember()).thenReturn(false);
+        var file = new MockMultipartFile("file", "test.esm", "application/octet-stream", createEsmContent());
+
+        assertThatThrownBy(() -> fileUploadService.upload(file, null, null, null, null, null,
+                "https://my.api.com", "   ", "my-model"))
+                .isInstanceOf(LlmPoolService.PoolUnavailableException.class);
     }
 
     /** 有效 ESM 文件上传（默认 Prompt）应返回 taskId 和 fileName */
