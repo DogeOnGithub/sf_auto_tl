@@ -68,7 +68,15 @@ public interface EngineClient {
             String llmBaseUrl,
             String llmApiKey,
             String llmModel,
-            String sourceType
+            String sourceType,
+            /**
+             * 是否忽略「文件已汉化」的拦截
+             *
+             * <p>星裔（管理员）专用开关。只剩最后几条英文的文件中文占比必然过阈值会被引擎拦死，
+             * 而管理员恰恰是要把那几条补完。只跳过拦截动作，引擎仍会逐条剔除已汉化词条，
+             * 所以补最后几条只为那几条付费。
+             */
+            Boolean ignoreAlreadyTranslated
     ) {}
 
     record DictionaryEntryDto(

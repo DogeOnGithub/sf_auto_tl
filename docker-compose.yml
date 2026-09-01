@@ -52,6 +52,11 @@ services:
       # 池化后被抽干的是整个池而不是单个 KEY 所以这个上限照旧生效、不随成员数放大
       # 默认值与 engine/llm_config.py 的 MAX_ENTRIES_WITHOUT_OWN_KEY 保持一致
       MAX_ENTRIES_WITHOUT_OWN_KEY: ${MAX_ENTRIES_WITHOUT_OWN_KEY:-100000}
+      # 判定「整个文件已经汉化过」的中文词条占比阈值 达到就直接拒绝翻译
+      # 调低会更激进地拦截 但可能误杀还有真实工作量的半成品
+      # 默认值与 engine/llm_config.py 的 ALREADY_TRANSLATED_RATIO 保持一致
+      ALREADY_TRANSLATED_RATIO: ${ALREADY_TRANSLATED_RATIO:-0.98}
+      ALREADY_TRANSLATED_MIN_RECORDS: ${ALREADY_TRANSLATED_MIN_RECORDS:-30}
       # INFO 才能看到 token 用量汇总 逐条原文译文在 DEBUG
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       API_BASE_URL: http://starfield-api:8080

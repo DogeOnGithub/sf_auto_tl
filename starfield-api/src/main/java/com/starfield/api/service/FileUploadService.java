@@ -79,15 +79,17 @@ public class FileUploadService {
      * @param llmBaseUrl        自定义 LLM API 地址（可选）
      * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
      * @param llmModel          自定义 LLM 模型名称（可选）
+     * @param ignoreAlreadyTranslated 是否忽略「文件已汉化」的拦截（星裔专用，可选，默认 false）
      * @return 上传响应（taskId + fileName）
      * @throws IOException 文件存储异常
      */
     public FileUploadResponse upload(MultipartFile file, Long creationVersionId,
                                      Long promptId, String newPromptName,
                                      String newPromptContent, String confirmationMode,
-                                     String llmBaseUrl, String llmApiKey, String llmModel) throws IOException {
+                                     String llmBaseUrl, String llmApiKey, String llmModel,
+                                     boolean ignoreAlreadyTranslated) throws IOException {
         var fileName = file.getOriginalFilename();
-        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {} llmModel {}", fileName, creationVersionId, confirmationMode, llmModel);
+        log.info("[upload] 开始处理文件上传 fileName {} creationVersionId {} confirmationMode {} llmModel {} ignoreAlreadyTranslated {}", fileName, creationVersionId, confirmationMode, llmModel, ignoreAlreadyTranslated);
 
         requireDefaultQuotaAvailable(llmBaseUrl, llmApiKey, llmModel);
         validateEsmFormat(file);
@@ -108,7 +110,7 @@ public class FileUploadService {
         translationTaskRepository.insert(task);
         log.info("[upload] 任务创建成功 taskId {} promptId {} confirmationMode {} llmModel {}", taskId, resolvedPrompt.id(), resolvedMode, llmModel);
 
-        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel);
+        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel, ignoreAlreadyTranslated);
 
         return new FileUploadResponse(taskId, fileName);
     }
@@ -126,15 +128,17 @@ public class FileUploadService {
      * @param llmBaseUrl        自定义 LLM API 地址（可选）
      * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
      * @param llmModel          自定义 LLM 模型名称（可选）
+     * @param ignoreAlreadyTranslated 是否忽略「文件已汉化」的拦截（星裔专用，可选，默认 false）
      * @return 上传响应（taskId + baseName）
      * @throws IOException 文件处理异常
      */
     public FileUploadResponse uploadStrings(MultipartFile file, Long creationVersionId,
                                             Long promptId, String newPromptName,
                                             String newPromptContent, String confirmationMode,
-                                            String llmBaseUrl, String llmApiKey, String llmModel) throws IOException {
+                                            String llmBaseUrl, String llmApiKey, String llmModel,
+                                            boolean ignoreAlreadyTranslated) throws IOException {
         var zipName = file.getOriginalFilename();
-        log.info("[uploadStrings] 开始处理 Strings 上传 zipName {} creationVersionId {} confirmationMode {} llmModel {}", zipName, creationVersionId, confirmationMode, llmModel);
+        log.info("[uploadStrings] 开始处理 Strings 上传 zipName {} creationVersionId {} confirmationMode {} llmModel {} ignoreAlreadyTranslated {}", zipName, creationVersionId, confirmationMode, llmModel, ignoreAlreadyTranslated);
 
         requireDefaultQuotaAvailable(llmBaseUrl, llmApiKey, llmModel);
         var taskId = UUID.randomUUID().toString();
@@ -154,7 +158,7 @@ public class FileUploadService {
         translationTaskRepository.insert(task);
         log.info("[uploadStrings] 任务创建成功 taskId {} baseName {} confirmationMode {}", taskId, extracted.baseName(), resolvedMode);
 
-        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel);
+        submitToEngine(task, resolvedPrompt.content(), llmBaseUrl, llmApiKey, llmModel, ignoreAlreadyTranslated);
 
         return new FileUploadResponse(taskId, extracted.baseName());
     }
@@ -446,9 +450,11 @@ public class FileUploadService {
      * @param llmBaseUrl   自定义 LLM API 地址（可选）
      * @param llmApiKey    自定义 LLM API Key（可选）
      * @param llmModel     自定义 LLM 模型名称（可选）
+     * @param ignoreAlreadyTranslated 是否忽略「文件已汉化」的拦截（星裔专用）
      */
     void submitToEngine(TranslationTask task, String customPrompt,
-                        String llmBaseUrl, String llmApiKey, String llmModel) {
+                        String llmBaseUrl, String llmApiKey, String llmModel,
+                        boolean ignoreAlreadyTranslated) {
         try {
             var dictionaryEntries = dictionaryEntryRepository.selectList(null).stream()
                     .map(entry -> new EngineClient.DictionaryEntryDto(
@@ -471,11 +477,12 @@ public class FileUploadService {
                     llmBaseUrl,
                     llmApiKey,
                     llmModel,
-                    task.getSourceType()
+                    task.getSourceType(),
+                    ignoreAlreadyTranslated
             );
 
             engineClient.submitTranslation(request);
-            log.info("[submitToEngine] 翻译任务已提交到引擎 taskId {}", task.getTaskId());
+            log.info("[submitToEngine] 翻译任务已提交到引擎 taskId {} ignoreAlreadyTranslated {}", task.getTaskId(), ignoreAlreadyTranslated);
         } catch (Exception e) {
             log.error("[submitToEngine] 提交翻译引擎失败 taskId {}", task.getTaskId(), e);
         }

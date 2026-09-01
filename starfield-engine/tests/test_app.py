@@ -68,7 +68,25 @@ class TestPostTranslate:
             llm_model=None,
             enable_glossary_extraction=True,
             source_type="esm",
+            ignore_already_translated=False,
         )
+
+    def test_submit_passes_ignore_already_translated(self, client):
+        """ignoreAlreadyTranslated 要透传给 translator 否则星裔的放行开关点了没反应。"""
+        with patch("engine.app.translator") as mock_translator:
+            mock_translator.submit_task.return_value = {"taskId": "t-3", "status": "accepted"}
+
+            resp = client.post(
+                "/engine/translate",
+                json={
+                    "taskId": "t-3",
+                    "filePath": "/tmp/test.esm",
+                    "ignoreAlreadyTranslated": True,
+                },
+            )
+
+        assert resp.status_code == 202
+        assert mock_translator.submit_task.call_args.kwargs["ignore_already_translated"] is True
 
     def test_submit_missing_task_id_returns_400(self, client):
         """缺少 taskId 应返回 400。"""

@@ -6,6 +6,7 @@ import { uploadFile, uploadStringsZip } from '@/services/fileApi'
 import { getCreations } from '@/services/creationApi'
 import { listPrompts } from '@/services/promptApi'
 import { createZip } from '@/utils/zip'
+import { useStarborn } from '@/composables/useStarborn'
 import type { ZipEntry } from '@/utils/zip'
 import type { FileUploadResponse, Creation, PromptItem } from '@/types'
 import type { UploadRequestOptions } from 'element-plus'
@@ -13,6 +14,8 @@ import type { UploadRequestOptions } from 'element-plus'
 /** 翻译源模式由父组件控制（页面标题旁的选择器）：esm（ESM/ESP 文件）或 strings（本地化 mod 的 Strings 文件夹） */
 const props = defineProps<{ sourceMode?: 'esm' | 'strings' }>()
 const sourceMode = computed(() => props.sourceMode ?? 'esm')
+
+const { isStarborn } = useStarborn()
 
 /** Strings 文件夹选择的隐藏 input 引用 */
 const stringsInput = ref<HTMLInputElement | null>(null)
@@ -38,6 +41,15 @@ const loadingCreations = ref(false)
 
 /** 翻译模式 */
 const confirmationMode = ref<'direct' | 'confirmation'>('confirmation')
+
+/**
+ * 忽略「文件已汉化」的拦截（仅星裔可见）
+ *
+ * 只剩最后几条英文的文件中文占比必然过阈值会被引擎拦死，而这时恰恰是要把那几条补完。
+ * 开关只跳过拦截动作，引擎仍然逐条剔除已汉化的词条，所以补最后几条只为那几条付费。
+ * 默认关闭且每次上传后不保留，避免顺手开着之后所有任务都绕过护栏。
+ */
+const ignoreAlreadyTranslated = ref(false)
 
 /** Prompt 选择 */
 const promptMode = ref<'default' | 'select' | 'new'>('default')
@@ -275,10 +287,13 @@ async function handleStringsUpload(zipFile: File) {
       useCustomLlm.value ? llmBaseUrl.value.trim() : undefined,
       useCustomLlm.value ? llmApiKey.value.trim() : undefined,
       useCustomLlm.value ? llmModel.value.trim() : undefined,
+      isStarborn.value ? ignoreAlreadyTranslated.value : undefined,
     )
     if (useCustomLlm.value) {
       saveLlmConfig()
     }
+    // 放行开关不跨任务保留 避免顺手开着之后所有任务都绕过护栏
+    ignoreAlreadyTranslated.value = false
     ElMessage.success(`${result.fileName} 上传成功`)
     emit('upload-success', result)
   } catch (err: any) {
@@ -311,10 +326,13 @@ async function handleUpload(options: UploadRequestOptions) {
       useCustomLlm.value ? llmBaseUrl.value.trim() : undefined,
       useCustomLlm.value ? llmApiKey.value.trim() : undefined,
       useCustomLlm.value ? llmModel.value.trim() : undefined,
+      isStarborn.value ? ignoreAlreadyTranslated.value : undefined,
     )
     if (useCustomLlm.value) {
       saveLlmConfig()
     }
+    // 放行开关不跨任务保留 避免顺手开着之后所有任务都绕过护栏
+    ignoreAlreadyTranslated.value = false
     ElMessage.success(`文件 ${result.fileName} 上传成功`)
     emit('upload-success', result)
   } catch (err: any) {
@@ -387,6 +405,26 @@ async function handleUpload(options: UploadRequestOptions) {
           >
             <el-icon v-if="confirmationMode === 'direct'" class="check-icon"><Check /></el-icon>
             <span>全自动</span>
+          </div>
+        </el-tooltip>
+      </div>
+    </div>
+
+    <!-- 已汉化拦截放行（仅星裔可见） -->
+    <div v-if="isStarborn" class="option-row">
+      <span class="option-label">已汉化拦截</span>
+      <div class="check-tags">
+        <el-tooltip
+          content="文件里绝大多数词条已是中文时会被拦下。补最后几条漏译时勾这个放行，已汉化的词条仍然不会重复送翻"
+          placement="top"
+        >
+          <div
+            class="check-tag"
+            :class="{ active: ignoreAlreadyTranslated }"
+            @click="ignoreAlreadyTranslated = !ignoreAlreadyTranslated"
+          >
+            <el-icon v-if="ignoreAlreadyTranslated" class="check-icon"><Check /></el-icon>
+            <span>确认要翻，忽略拦截</span>
           </div>
         </el-tooltip>
       </div>

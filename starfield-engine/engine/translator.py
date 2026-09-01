@@ -18,7 +18,12 @@ from engine.llm_client import (
     _split_batches,
     translate_records,
 )
-from engine.llm_config import MAX_ENTRIES_WITHOUT_OWN_KEY
+from engine.lang_detect import contains_chinese, measure_chinese_ratio
+from engine.llm_config import (
+    ALREADY_TRANSLATED_MIN_RECORDS,
+    ALREADY_TRANSLATED_RATIO,
+    MAX_ENTRIES_WITHOUT_OWN_KEY,
+)
 from engine.llm_pool import get_pool
 from engine.strings_parser import parse_strings_dir
 from engine.strings_writer import write_strings_dir
@@ -259,6 +264,7 @@ class Translator:
         llm_model: str | None = None,
         enable_glossary_extraction: bool = True,
         source_type: str = SOURCE_TYPE_ESM,
+        ignore_already_translated: bool = False,
     ) -> Dict[str, str]:
         """提交翻译任务并异步执行。
 
@@ -275,18 +281,21 @@ class Translator:
             llm_model: 自定义 LLM 模型名称。
             enable_glossary_extraction: 是否启用自动术语提取 默认 True。
             source_type: 来源类型（esm 或 strings）默认 esm。
+            ignore_already_translated: 是否忽略「文件已汉化」的拦截 默认 False。
+                星裔（管理员）专用：只剩最后几条英文的文件占比必然过阈值会被拦死，
+                而管理员恰恰是要把那几条补完。只跳过拦截 不影响逐条剔除已汉化词条。
 
         Returns:
             包含 taskId 和 status 的响应字典。
         """
-        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s enable_glossary_extraction %s source_type %s", task_id, file_path, skip_cache, llm_model, enable_glossary_extraction, source_type)
+        logger.info("[submit_task] 提交翻译任务 task_id %s file_path %s skip_cache %s llm_model %s enable_glossary_extraction %s source_type %s ignore_already_translated %s", task_id, file_path, skip_cache, llm_model, enable_glossary_extraction, source_type, ignore_already_translated)
 
         with self._lock:
             self._tasks[task_id] = self._new_task(task_id, callback_url)
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model, enable_glossary_extraction, source_type),
+            args=(task_id, file_path, target_lang, custom_prompt, dictionary_entries, callback_url, skip_cache, llm_base_url, llm_api_key, llm_model, enable_glossary_extraction, source_type, ignore_already_translated),
             daemon=True,
         )
         thread.start()
@@ -307,6 +316,7 @@ class Translator:
         llm_model: str | None = None,
         enable_glossary_extraction: bool = True,
         source_type: str = SOURCE_TYPE_ESM,
+        ignore_already_translated: bool = False,
     ) -> None:
         """执行翻译任务的完整流程：凭证护栏 → 解析 → 词条数护栏 → 缓存查询 → 术语提取 → 翻译 → 缓存保存 → 重组。"""
         try:
@@ -340,6 +350,37 @@ class Translator:
                 self._report_progress(task_id, callback_url)
                 return
 
+            # 1.4 已汉化文件护栏
+            # 线上大量用户把汉化过的 mod 重新提交。这类文件送进 LLM 只会拿回一份和原文
+            # 几乎一样的结果 但 token 照价扣；而且 Java 侧写缓存时会主动丢弃「原文含中文」
+            # 的条目 所以同一个文件提交 N 次就是 N 次全额付费 一次都不会命中缓存。
+            # 放在 1.5 之前：一个几十万词条的已汉化文件 报「已经是中文」比报「超出词条上限
+            # 请自带 KEY」有用得多——后者会把用户引导去用自己的 KEY 烧一遍同样没意义的翻译。
+            # 判定只读已解析的文本 不发任何请求 所以放在这里不增加成本。
+            # ignore_already_translated 是星裔（管理员）的放行开关：一个只剩最后几条英文的
+            # 文件占比必然过阈值 会被拦死 而管理员恰恰是要把那几条补完。放行只跳过「拦截」
+            # 这个动作 不改变 2.1 的逐条剔除 所以补最后几条仍然只为那几条付费。
+            detectable, chinese_count, chinese_ratio = measure_chinese_ratio(records)
+            already_translated = detectable >= ALREADY_TRANSLATED_MIN_RECORDS and chinese_ratio >= ALREADY_TRANSLATED_RATIO
+            if already_translated and ignore_already_translated:
+                logger.warning(
+                    "[_run_task] 文件已是中文 但调用方指定忽略拦截 继续翻译 task_id %s detectable %d chinese %d ratio %.4f",
+                    task_id, detectable, chinese_count, chinese_ratio,
+                )
+            if already_translated and not ignore_already_translated:
+                logger.warning(
+                    "[_run_task] 文件已是中文 拒绝翻译 task_id %s detectable %d chinese %d ratio %.4f threshold %.4f",
+                    task_id, detectable, chinese_count, chinese_ratio, ALREADY_TRANSLATED_RATIO,
+                )
+                self._set_error(
+                    task_id,
+                    f"这个文件已经是简体中文了（{detectable} 条可判定文本中有 {chinese_count} 条是中文 "
+                    f"占比 {chinese_ratio:.1%}）无需再翻译。"
+                    f"如果你要的是汉化前的原版文件 请重新下载 mod 原始版本后再上传",
+                )
+                self._report_progress(task_id, callback_url)
+                return
+
             # 1.5 公共额度的词条数护栏
             # 必须卡在这里：往下第一个花钱的动作是术语提取（步骤 2.5），而它被 try/except
             # 包着降级，异常会被吞掉拦不住任务。放在解析拿到 total 之后、缓存查询之前，
@@ -366,6 +407,50 @@ class Translator:
             # 过滤出未命中缓存的词条
             uncached_records = [r for r in records if r.record_id not in cached]
 
+            # 2.1 逐条剔除已是中文的词条 直接沿用原文 不送 LLM
+            # 1.4 的占比护栏只挡「整个文件都汉化过」 挡不住半成品：线上样本里有汉化了 60%
+            # 就重新提交的文件 那 60% 送进 LLM 等于按原价买回一份原文。这里按条过滤 才能让
+            # 半成品只为真正剩下的英文付费。同时它是 1.4 阈值敢取保守值的前提——阈值放过去的
+            # 文件在这一步依然是零成本 所以宁可漏拦也不误拦。
+            pretranslated = {}
+            pending_records = []
+            for r in uncached_records:
+                if contains_chinese(r.text):
+                    pretranslated[r.record_id] = r.text
+                else:
+                    pending_records.append(r)
+            if pretranslated:
+                logger.info(
+                    "[_run_task] 跳过已是中文的词条 task_id %s skipped %d remaining %d",
+                    task_id, len(pretranslated), len(pending_records),
+                )
+            uncached_records = pending_records
+
+            # 已有最终译文的词条：缓存命中的用缓存译文 已是中文的用原文
+            presolved = {**cached, **pretranslated}
+
+            # 2.2 无待翻词条且没有任何缓存译文 说明整个文件的可翻译文本都已是中文
+            # 与 1.4 的占比判定互补 且不依赖阈值和样本量：词条少的小文件走到这里被精确拦下。
+            # 必须同时要求 cached 为空 否则会把「全部命中缓存」这条正常的零成本路径误判成已汉化。
+            # 这道判定即便被放行也拦：忽略拦截的用意是「补完剩下的英文」 而这里剩下的英文是 0 条，
+            # 放行下去只会产出一个和输入完全一样的文件 反而让管理员以为改动生效了。
+            if not uncached_records and not cached and pretranslated:
+                logger.warning(
+                    "[_run_task] 全部可翻译词条均已是中文 拒绝翻译 task_id %s count %d ignore_already_translated %s",
+                    task_id, len(pretranslated), ignore_already_translated,
+                )
+                hint = (
+                    "已按要求忽略已汉化拦截 但逐条检查后没有任何未汉化的词条 没有可翻译的内容"
+                    if ignore_already_translated
+                    else "如果你要的是汉化前的原版文件 请重新下载 mod 原始版本后再上传"
+                )
+                self._set_error(
+                    task_id,
+                    f"这个文件的 {len(pretranslated)} 条可翻译文本全部已是简体中文 无需再翻译。{hint}",
+                )
+                self._report_progress(task_id, callback_url)
+                return
+
             # 对 uncached 按缓存键 (record_type, subrecord_type, source_text) 去重
             # 相同文本只翻译一次，翻译完后映射回所有 record_id
             seen_keys: dict[tuple[str, str], str] = {}  # (sub_type, source_text) -> first record_id
@@ -390,27 +475,30 @@ class Translator:
             if dedup_saved > 0:
                 logger.info("[_run_task] 去重节省 %d 条 LLM 调用 task_id %s", dedup_saved, task_id)
 
-            # 缓存命中的词条计入已翻译进度
-            self._update_progress(task_id, cached_count, total)
+            # 缓存命中和已是中文的词条都不需要 LLM 计入已翻译进度
+            presolved_count = len(presolved)
+            self._update_progress(task_id, presolved_count, total)
 
-            # 上报缓存命中的词条作为 items（供 confirmation 模式写入确认记录）
-            if cached:
-                cached_items = []
+            # 上报这些词条作为 items（供 confirmation 模式写入确认记录）
+            # 已是中文的词条也必须上报 否则 confirmation 模式下确认记录数会少于总词条数
+            # Java 侧 handleProgressCallback 会告警 且后续重组会缺掉这批词条
+            if presolved:
+                presolved_items = []
                 records_by_id = {r.record_id: r for r in records}
-                for rid, translated in cached.items():
+                for rid, translated in presolved.items():
                     rec = records_by_id.get(rid)
                     if rec:
                         parts = rid.split(":", 2)
                         record_type = parts[0] if len(parts) > 0 else ""
-                        cached_items.append({
+                        presolved_items.append({
                             "recordId": rid,
                             "recordType": record_type,
                             "sourceText": rec.text,
                             "targetText": translated,
                             "editorId": rec.editor_id,
                         })
-                if cached_items:
-                    self._report_progress(task_id, callback_url, items=cached_items)
+                if presolved_items:
+                    self._report_progress(task_id, callback_url, items=presolved_items)
 
             # 2.5 术语提取（如启用且需要分批翻译）
             # 分批数必须和 translate_records 实际使用的上限一致 否则会出现
@@ -448,8 +536,8 @@ class Translator:
                 logger.info("[_run_task] 开始翻译 task_id %s uncached_count %d dedup_count %d", task_id, len(uncached_records), len(dedup_records))
 
                 def on_batch_done(translated_count: int) -> None:
-                    """每批翻译完成后更新进度并上报（加上缓存命中数）。"""
-                    self._update_progress(task_id, cached_count + translated_count, total)
+                    """每批翻译完成后更新进度并上报（加上无需 LLM 的词条数）。"""
+                    self._update_progress(task_id, presolved_count + translated_count, total)
                     self._report_progress(task_id, callback_url)
 
                 def on_batch_translated(batch_result: dict, batch_records: list) -> None:
@@ -520,11 +608,14 @@ class Translator:
                         task_id, len(dedup_translations), len(dedup_records), yield_rate,
                     )
             else:
-                logger.info("[_run_task] 所有词条命中缓存 task_id %s", task_id)
+                logger.info(
+                    "[_run_task] 无需调用 LLM task_id %s cached %d pretranslated %d",
+                    task_id, cached_count, len(pretranslated),
+                )
                 new_translations = {}
 
-            # 5. 合并缓存结果和 LLM 结果
-            translations = {**cached, **new_translations}
+            # 5. 合并无需 LLM 的词条（缓存译文 + 已是中文的原文）和 LLM 结果
+            translations = {**presolved, **new_translations}
 
             # 5.5 补全翻译失败的词条（用原文回退），确保每个可翻译词条都有对应结果
             missing_count = 0
@@ -542,7 +633,7 @@ class Translator:
                 records_by_id = {r.record_id: r for r in records}
                 fallback_items = []
                 for r in records:
-                    if r.record_id not in cached and r.record_id not in new_translations:
+                    if r.record_id not in presolved and r.record_id not in new_translations:
                         parts = r.record_id.split(":", 2)
                         record_type = parts[0] if len(parts) > 0 else ""
                         fallback_items.append({

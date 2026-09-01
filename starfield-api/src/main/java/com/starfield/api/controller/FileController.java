@@ -36,6 +36,7 @@ public class FileController {
      * @param llmBaseUrl        自定义 LLM API 地址（可选）
      * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
      * @param llmModel          自定义 LLM 模型名称（可选）
+     * @param ignoreAlreadyTranslated 是否忽略「文件已汉化」的拦截（星裔专用，可选，默认 false）
      * @return 任务 ID 和文件名
      * @throws IOException 文件处理异常
      */
@@ -49,9 +50,10 @@ public class FileController {
             @RequestParam(value = "confirmationMode", required = false) String confirmationMode,
             @RequestParam(value = "llmBaseUrl", required = false) String llmBaseUrl,
             @RequestParam(value = "llmApiKey", required = false) String llmApiKey,
-            @RequestParam(value = "llmModel", required = false) String llmModel) throws IOException {
-        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {} llmModel {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode, llmModel);
-        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode, llmBaseUrl, llmApiKey, llmModel);
+            @RequestParam(value = "llmModel", required = false) String llmModel,
+            @RequestParam(value = "ignoreAlreadyTranslated", required = false, defaultValue = "false") boolean ignoreAlreadyTranslated) throws IOException {
+        log.info("[upload] 收到文件上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {} llmModel {} ignoreAlreadyTranslated {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode, llmModel, ignoreAlreadyTranslated);
+        var response = fileUploadService.upload(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode, llmBaseUrl, llmApiKey, llmModel, ignoreAlreadyTranslated);
         return ResponseEntity.ok(response);
     }
 
@@ -67,6 +69,7 @@ public class FileController {
      * @param llmBaseUrl        自定义 LLM API 地址（可选）
      * @param llmApiKey         自定义 LLM API Key（可选，不持久化）
      * @param llmModel          自定义 LLM 模型名称（可选）
+     * @param ignoreAlreadyTranslated 是否忽略「文件已汉化」的拦截（星裔专用，可选，默认 false）
      * @return 任务 ID 和文件基础名
      * @throws IOException 文件处理异常
      */
@@ -80,9 +83,10 @@ public class FileController {
             @RequestParam(value = "confirmationMode", required = false) String confirmationMode,
             @RequestParam(value = "llmBaseUrl", required = false) String llmBaseUrl,
             @RequestParam(value = "llmApiKey", required = false) String llmApiKey,
-            @RequestParam(value = "llmModel", required = false) String llmModel) throws IOException {
-        log.info("[uploadStrings] 收到 Strings 上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {} llmModel {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode, llmModel);
-        var response = fileUploadService.uploadStrings(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode, llmBaseUrl, llmApiKey, llmModel);
+            @RequestParam(value = "llmModel", required = false) String llmModel,
+            @RequestParam(value = "ignoreAlreadyTranslated", required = false, defaultValue = "false") boolean ignoreAlreadyTranslated) throws IOException {
+        log.info("[uploadStrings] 收到 Strings 上传请求 fileName {} creationVersionId {} promptId {} confirmationMode {} llmModel {} ignoreAlreadyTranslated {}", file.getOriginalFilename(), creationVersionId, promptId, confirmationMode, llmModel, ignoreAlreadyTranslated);
+        var response = fileUploadService.uploadStrings(file, creationVersionId, promptId, newPromptName, newPromptContent, confirmationMode, llmBaseUrl, llmApiKey, llmModel, ignoreAlreadyTranslated);
         return ResponseEntity.ok(response);
     }
 }

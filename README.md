@@ -119,6 +119,8 @@ npm run dev
 | `LLM_POOL_COOLDOWN_MODEL_NOT_FOUND` | 模型不存在（404）后的成员冷却秒数 | `1800` |
 | `LLM_POOL_COOLDOWN_TRANSIENT` | 网络或 5xx 后的成员冷却秒数 | `15` |
 | `MAX_ENTRIES_WITHOUT_OWN_KEY` | 走默认额度时允许翻译的词条上限，超过要求自带地址、KEY 和模型名 | `100000` |
+| `ALREADY_TRANSLATED_RATIO` | 判定「文件已汉化过」的中文词条占比阈值，达到即拒绝翻译。调低更激进，可能误杀半成品 | `0.98` |
+| `ALREADY_TRANSLATED_MIN_RECORDS` | 占比判定生效所需的最小样本量，样本不足时改由「逐条过滤后无待翻词条」兜底 | `30` |
 | `LLM_OUTPUT_TOKEN_BUDGET` | 单批输出 token 预算，批次字符上限按它反推 | `3200` |
 | `LLM_MAX_BATCH_CHARS` | 每批原文字符数上限 | `8000` |
 | `LLM_MAX_BATCH_RECORDS` | 每批词条数上限 | `80` |

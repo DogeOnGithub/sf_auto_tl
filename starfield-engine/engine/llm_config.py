@@ -67,6 +67,33 @@ def env_int_or_none(name: str) -> int | None:
     return value
 
 
+def env_ratio(name: str, default: float) -> float:
+    """读取 0~1 之间的比例型环境变量 非法或越界回退默认值。
+
+    <p>越界必须回退而不是截断：把 1.5 截成 1.0 会静默改变判定语义，
+    而回退默认值至少会留下一条 warning 日志让人发现配错了。
+
+    Args:
+        name: 环境变量名。
+        default: 默认值。
+
+    Returns:
+        解析后的比例值。
+    """
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("[env_ratio] 环境变量非数字 使用默认值 name %s raw %s default %s", name, raw, default)
+        return default
+    if not 0 < value <= 1:
+        logger.warning("[env_ratio] 环境变量必须在 0~1 之间 使用默认值 name %s raw %s default %s", name, raw, default)
+        return default
+    return value
+
+
 # Backend API 地址 缓存查询与凭证池拉取都走它
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8080")
 
@@ -161,3 +188,16 @@ POOL_COOLDOWN_AUTH = env_int("LLM_POOL_COOLDOWN_AUTH", 1800)
 POOL_COOLDOWN_QUOTA = env_int("LLM_POOL_COOLDOWN_QUOTA", 1800)
 POOL_COOLDOWN_MODEL_NOT_FOUND = env_int("LLM_POOL_COOLDOWN_MODEL_NOT_FOUND", 1800)
 POOL_COOLDOWN_TRANSIENT = env_int("LLM_POOL_COOLDOWN_TRANSIENT", 15)
+
+# 判定「整个文件已经汉化过」的中文词条占比阈值
+# 分母是带语言信号的词条数 口径见 lang_detect.measure_chinese_ratio。
+# 0.98 是拿线上样本量出来的：真·英文 mod 稳定落在 0.0000；还有实际工作量的半成品
+# 落在 0.60 和 0.93（分别剩 287 条和 77 条真英文）；而已经汉化完的文件落在 0.98~1.00，
+# 剩下那几条无一例外是 Human_Male_Hair_xxx_HairMesh、EliminatorJrProjectile
+# 这类不该翻的内部标识符。取 0.95 会把 0.93 那个半成品误杀 取 0.99 又漏掉 0.98 的成品。
+ALREADY_TRANSLATED_RATIO = env_ratio("ALREADY_TRANSLATED_RATIO", 0.98)
+
+# 占比判定生效所需的最小样本量 样本太小时占比没有统计意义
+# 一个只有 3 条词条的 mod 碰巧都含中文就被拦掉太粗暴；这类文件由「逐条过滤后无待翻词条」
+# 那条精确判定兜住 不依赖占比 所以这个下限不会放过真正的已汉化文件。
+ALREADY_TRANSLATED_MIN_RECORDS = env_int("ALREADY_TRANSLATED_MIN_RECORDS", 30)

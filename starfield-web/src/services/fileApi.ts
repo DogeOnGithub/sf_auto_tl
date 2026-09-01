@@ -13,6 +13,7 @@ export function uploadFile(
   llmBaseUrl?: string,
   llmApiKey?: string,
   llmModel?: string,
+  ignoreAlreadyTranslated?: boolean,
 ): Promise<FileUploadResponse> {
   var formData = new FormData()
   formData.append('file', file)
@@ -39,6 +40,9 @@ export function uploadFile(
   }
   if (llmModel) {
     formData.append('llmModel', llmModel)
+  }
+  if (ignoreAlreadyTranslated) {
+    formData.append('ignoreAlreadyTranslated', 'true')
   }
   return api
     .post<FileUploadResponse>('/api/files/upload', formData, {
@@ -65,6 +69,7 @@ export function uploadStringsZip(
   llmBaseUrl?: string,
   llmApiKey?: string,
   llmModel?: string,
+  ignoreAlreadyTranslated?: boolean,
 ): Promise<FileUploadResponse> {
   var formData = new FormData()
   formData.append('file', file)
@@ -91,6 +96,9 @@ export function uploadStringsZip(
   }
   if (llmModel) {
     formData.append('llmModel', llmModel)
+  }
+  if (ignoreAlreadyTranslated) {
+    formData.append('ignoreAlreadyTranslated', 'true')
   }
   return api
     .post<FileUploadResponse>('/api/files/upload-strings', formData, {

@@ -56,8 +56,9 @@ def create_app() -> Flask:
         llm_model = data.get("llmModel")
         enable_glossary_extraction = data.get("enableGlossaryExtraction", True)
         source_type = data.get("sourceType", "esm")
+        ignore_already_translated = bool(data.get("ignoreAlreadyTranslated", False))
 
-        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s source_type %s", task_id, file_path, skip_cache, llm_model, source_type)
+        logger.info("[submit_translate] 收到翻译请求 task_id %s file_path %s skip_cache %s llm_model %s source_type %s ignore_already_translated %s", task_id, file_path, skip_cache, llm_model, source_type, ignore_already_translated)
 
         result = translator.submit_task(
             task_id=task_id,
@@ -72,6 +73,7 @@ def create_app() -> Flask:
             llm_model=llm_model,
             enable_glossary_extraction=enable_glossary_extraction,
             source_type=source_type,
+            ignore_already_translated=ignore_already_translated,
         )
         return jsonify(result), 202
 
