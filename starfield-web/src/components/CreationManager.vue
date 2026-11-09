@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Link, Search, Edit, Upload, Download, Star, Warning, User } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, type Ref } from 'vue'
+import { ElMessage, ElMessageBox, genFileId, type UploadFile, type UploadFiles, type UploadInstance, type UploadRawFile } from 'element-plus'
+import { Plus, Delete, Link, Search, Edit, Upload, UploadFilled, Download, Star, Warning, User } from '@element-plus/icons-vue'
 import { createCreation, getCreations, getCreation, updateCreation, deleteCreation, deleteCreationVersion, getCreationTasks, uploadPatch, updateVersionShareLink, uploadCreationImages, deleteCreationImage, reorderCreationImages, getCreationTags, addCreationVersion, bindFile, getFeaturedCreations, featureCreation, unfeatureCreation, addWarning, updateWarning, deleteWarning, uploadBanner, deleteBanner, getCreationAuthors } from '@/services/creationApi'
 import { getCarouselImage } from '@/utils/creationUtils'
 import { downloadFile } from '@/services/taskApi'
 import { uploadToCos } from '@/services/cosUpload'
-import type { Creation, CreationAuthor, CreationImage, CreationWarning, TaskResponse } from '@/types'
+import { isFileDrag } from '@/composables/useFileDropGuard'
+import type { Creation, CreationAuthor, CreationImage, CreationVersion, CreationWarning, TaskResponse } from '@/types'
 import draggable from 'vuedraggable'
 
 const props = defineProps<{ isStarborn: boolean }>()
@@ -37,6 +38,62 @@ const form = ref({
 })
 const modFile = ref<File | null>(null)
 const imageFiles = ref<File[]>([])
+
+/**
+ * 对话框里「只选一个文件、提交时才上传」的 el-upload 通用处理（支持拖拽）
+ * <p>
+ * 修掉原来的三个坑：
+ * 1. 列表里点 × 删除后 target 仍持有文件，提交时还会带上 → 补 on-remove
+ * 2. 对话框关闭不销毁，重开后旧文件还在列表里 → 打开对话框时调 reset 清空
+ * 3. limit=1 且已有文件时再选/再拖会被静默丢弃 → on-exceed 改为用新文件替换
+ *
+ * @param target 存放选中文件的 ref，提交时从这里取
+ */
+function useSingleFileUpload(target: Ref<File | null>) {
+  const uploadRef = ref<UploadInstance>()
+
+  /** 拖入文件夹时 el-upload 会标记 isDirectory，文件夹无法作为文件上传，直接移除 */
+  function onChange(uploadFile: UploadFile) {
+    var raw = uploadFile.raw as (UploadRawFile & { isDirectory?: boolean }) | undefined
+    if (!raw) return
+    if (raw.isDirectory) {
+      uploadRef.value?.handleRemove(uploadFile)
+      ElMessage.warning('不支持上传文件夹')
+      return
+    }
+    target.value = raw
+  }
+
+  function onRemove() {
+    target.value = null
+  }
+
+  /** 已有文件时再选或再拖，用新文件替换旧文件；一次拖入多个时只取第一个 */
+  function onExceed(files: File[]) {
+    var upload = uploadRef.value
+    if (!upload || files.length === 0) return
+    upload.clearFiles()
+    var raw = files[0] as UploadRawFile
+    raw.uid = genFileId()
+    upload.handleStart(raw)
+  }
+
+  function reset() {
+    uploadRef.value?.clearFiles()
+    target.value = null
+  }
+
+  return { uploadRef, onChange, onRemove, onExceed, reset }
+}
+
+/** 分享 Mod 对话框的 Mod 文件 */
+const {
+  uploadRef: modUploadRef,
+  onChange: handleModFileChange,
+  onRemove: handleModFileRemove,
+  onExceed: handleModFileExceed,
+  reset: resetModFile,
+} = useSingleFileUpload(modFile)
 
 /** 编辑对话框 */
 const showEditDialog = ref(false)
@@ -71,6 +128,15 @@ const versionForm = ref({
   fileShareLink: '',
 })
 const versionModFile = ref<File | null>(null)
+
+/** 添加版本对话框的 Mod 文件 */
+const {
+  uploadRef: versionModUploadRef,
+  onChange: handleVersionModFileChange,
+  onRemove: handleVersionModFileRemove,
+  onExceed: handleVersionModFileExceed,
+  reset: resetVersionModFile,
+} = useSingleFileUpload(versionModFile)
 
 /** 预设标签列表 */
 const presetTags = ['符合设定', '任务', '装备', '地点', '支持成就', '武器', '哨站', '家园', '飞船']
@@ -222,28 +288,40 @@ function handleSizeChange(size: number) {
   currentPage.value = 1
   loadCreations()
 }
-/** 打开上传对话框 */
+/**
+ * 打开上传对话框
+ * 对话框关闭时不销毁，el-upload 内部的文件列表会保留，必须连同变量一起清空，否则重开会看到上次的文件
+ */
 function openUploadDialog() {
   form.value = { name: '', translatedName: '', author: '', ccLink: '', nexusLink: '', version: '', fileShareLink: '', remark: '', tags: '' }
-  modFile.value = null
+  resetModFile()
+  imageUploadRef.value?.clearFiles()
   imageFiles.value = []
   showUploadDialog.value = true
 }
 
-function handleModFileChange(uploadFile: any) {
-  modFile.value = uploadFile.raw
+/** 从 el-upload 列表里取出图片文件，非图片不计入 */
+function collectImageFiles(uploadFiles: UploadFiles): File[] {
+  return uploadFiles
+    .map(f => f.raw)
+    .filter((raw): raw is UploadRawFile => !!raw && raw.type.startsWith('image/'))
 }
 
-function handleImageChange(_uploadFile: any, uploadFiles: any[]) {
-  imageFiles.value = uploadFiles.map((f: any) => f.raw)
+/** accept 只限制文件选择框，拖拽进来的文件不受限制，非图片要手动剔除 */
+function handleImageChange(uploadFile: UploadFile, uploadFiles: UploadFiles) {
+  if (uploadFile.raw && !uploadFile.raw.type.startsWith('image/')) {
+    imageUploadRef.value?.handleRemove(uploadFile)
+    ElMessage.warning(`「${uploadFile.name}」不是图片，已忽略`)
+  }
+  imageFiles.value = collectImageFiles(uploadFiles)
 }
 
-function handleImageRemove(_uploadFile: any, uploadFiles: any[]) {
-  imageFiles.value = uploadFiles.map((f: any) => f.raw)
+function handleImageRemove(_uploadFile: UploadFile, uploadFiles: UploadFiles) {
+  imageFiles.value = collectImageFiles(uploadFiles)
 }
 
 /** 图片上传组件 ref */
-const imageUploadRef = ref<any>(null)
+const imageUploadRef = ref<UploadInstance>()
 
 /** 切换预设标签（适用于逗号分隔的 tags 字符串） */
 function togglePresetTag(obj: Record<string, any>, field: string, tag: string) {
@@ -274,7 +352,7 @@ function handlePasteImage(e: ClipboardEvent) {
       if (!file) continue
       var ext = file.type.split('/')[1] || 'png'
       var namedFile = new File([file], `paste-${Date.now()}.${ext}`, { type: file.type })
-      imageUploadRef.value?.handleStart(namedFile)
+      imageUploadRef.value?.handleStart(namedFile as UploadRawFile)
       break
     }
   }
@@ -456,15 +534,11 @@ function getLatestVersion(creation: Creation): string {
   return creation.versions[0].version
 }
 
-/** 打开添加版本对话框 */
+/** 打开添加版本对话框（对话框不销毁，需清空上次残留的文件） */
 function openAddVersionDialog() {
   versionForm.value = { version: '', fileShareLink: '' }
-  versionModFile.value = null
+  resetVersionModFile()
   showAddVersionDialog.value = true
-}
-
-function handleVersionModFileChange(uploadFile: any) {
-  versionModFile.value = uploadFile.raw
 }
 
 /** 提交添加版本 */
@@ -496,11 +570,25 @@ async function handleAddVersionSubmit() {
   }
 }
 
-/** 详情抽屉添加图片 */
-async function handleDetailImageAdd(_uploadFile: any, uploadFiles: any[]) {
-  if (!selectedCreation.value) return
-  var files = uploadFiles.map((f: any) => f.raw).filter(Boolean)
-  if (files.length === 0) return
+/** 详情抽屉添加图片的文件选择框 */
+const detailImageInput = ref<HTMLInputElement | null>(null)
+
+function triggerDetailImageSelect() {
+  detailImageInput.value?.click()
+}
+
+/**
+ * 详情抽屉添加图片，本次选中的文件一次性提交
+ * <p>
+ * 原来用 el-upload 的 on-change：多选 N 张会触发 N 次，每次都带着累计的全部文件，
+ * 列表又从不清空，导致重复上传。改用原生 input，只取本次选择的文件，处理完清空 value
+ */
+async function handleDetailImageAdd(event: Event) {
+  var input = event.target as HTMLInputElement
+  var files = Array.from(input.files ?? []).filter(f => f.type.startsWith('image/'))
+  // 清空后再次选择同一批文件也能触发 change
+  input.value = ''
+  if (!selectedCreation.value || files.length === 0) return
   uploadingDetailImage.value = true
   try {
     var result = await uploadCreationImages(selectedCreation.value.id, files)
@@ -545,12 +633,12 @@ async function handleImageSortEnd() {
 }
 
 /** 上传汉化补丁 */
-async function handleUploadPatch(versionId: number, uploadFile: any) {
+async function handleUploadPatch(versionId: number, file: File) {
   uploadingVersionId.value = versionId
   uploadType.value = 'patch'
   uploadProgress.value = 0
   try {
-    var result = await uploadPatch(versionId, uploadFile.raw, (percent) => { uploadProgress.value = percent })
+    var result = await uploadPatch(versionId, file, (percent) => { uploadProgress.value = percent })
     ElMessage.success('补丁上传成功')
     if (selectedCreation.value) {
       selectedCreation.value = result as any
@@ -610,12 +698,12 @@ function openExternal(url: string) {
 }
 
 /** 上传/替换 Mod 文件（分片直传 COS） */
-async function handleUploadFile(versionId: number, uploadFileObj: any) {
+async function handleUploadFile(versionId: number, file: File) {
   uploadingVersionId.value = versionId
   uploadType.value = 'file'
   uploadProgress.value = 0
   try {
-    var { cosKey, fileName } = await uploadToCos(uploadFileObj.raw, 'files', (percent) => { uploadProgress.value = percent })
+    var { cosKey, fileName } = await uploadToCos(file, 'files', (percent) => { uploadProgress.value = percent })
     var result = await bindFile(versionId, cosKey, fileName)
     ElMessage.success('文件上传成功')
     if (selectedCreation.value) {
@@ -631,6 +719,108 @@ async function handleUploadFile(versionId: number, uploadFileObj: any) {
     uploadType.value = null
     uploadProgress.value = 0
   }
+}
+
+/** 版本行内上传的文件类型：file 为 Mod 文件，patch 为汉化补丁 */
+type RowUploadType = 'file' | 'patch'
+
+const ROW_UPLOAD_LABEL: Record<RowUploadType, string> = { file: 'Mod 文件', patch: '汉化补丁' }
+
+/**
+ * 版本行内上传共用的文件选择框
+ * <p>
+ * 原来每行一个 limit=1 的 el-upload，选完不清空列表；表格没有 row-key，行组件会被复用，
+ * 同一行第二次上传、或切换作品后同位置的行再上传都会因超出数量限制被静默丢弃。
+ * 改为共用一个原生 input，每次选完清空 value
+ */
+const rowFileInput = ref<HTMLInputElement | null>(null)
+
+/** 点击按钮时记下目标行和类型，选完文件后据此上传 */
+let pendingRowUpload: { versionId: number; type: RowUploadType } | null = null
+
+/** 当前拖拽悬停的单元格，格式 `${versionId}-${type}`，用于高亮 */
+const dragoverCell = ref<string | null>(null)
+
+/** Mod 文件仅星裔可传，汉化补丁所有人可传 */
+function canUploadRow(type: RowUploadType): boolean {
+  return type === 'patch' || props.isStarborn
+}
+
+function startRowUpload(versionId: number, type: RowUploadType, file: File) {
+  if (type === 'file') handleUploadFile(versionId, file)
+  else handleUploadPatch(versionId, file)
+}
+
+/** 点击「上传 / 替换」打开文件选择框，主动选择文件不需要确认 */
+function triggerRowFileSelect(row: CreationVersion, type: RowUploadType) {
+  if (uploadingVersionId.value !== null || !canUploadRow(type)) return
+  pendingRowUpload = { versionId: row.id, type }
+  rowFileInput.value?.click()
+}
+
+function handleRowFileInputChange(event: Event) {
+  var input = event.target as HTMLInputElement
+  var file = input.files?.[0]
+  input.value = ''
+  var target = pendingRowUpload
+  pendingRowUpload = null
+  if (!file || !target) return
+  startRowUpload(target.versionId, target.type, file)
+}
+
+/** 文件拖到单元格上方时高亮；有上传进行中时显示禁止光标 */
+function handleRowDragOver(e: DragEvent, row: CreationVersion, type: RowUploadType) {
+  if (!canUploadRow(type) || !isFileDrag(e)) return
+  e.preventDefault()
+  var busy = uploadingVersionId.value !== null
+  e.dataTransfer!.dropEffect = busy ? 'none' : 'copy'
+  dragoverCell.value = busy ? null : `${row.id}-${type}`
+}
+
+/** 只有真正离开单元格才取消高亮，在内部子元素之间移动也会触发 dragleave */
+function handleRowDragLeave(e: DragEvent) {
+  var zone = e.currentTarget as HTMLElement
+  if (!zone.contains(e.relatedTarget as Node | null)) dragoverCell.value = null
+}
+
+/**
+ * 文件拖入版本行单元格后上传
+ * <p>
+ * Mod 文件和汉化补丁两列相邻，拖错格子很容易，已有文件时先确认再覆盖。
+ * DataTransfer 只在 drop 事件同步阶段可读，文件和目录判断必须在 await 之前取出
+ */
+async function handleRowDrop(e: DragEvent, row: CreationVersion, type: RowUploadType) {
+  if (!canUploadRow(type) || !isFileDrag(e)) return
+  e.preventDefault()
+  dragoverCell.value = null
+  if (uploadingVersionId.value !== null) {
+    ElMessage.warning('请等待当前上传完成')
+    return
+  }
+  var files = Array.from(e.dataTransfer?.files ?? [])
+  if (files.length !== 1) {
+    ElMessage.warning('一次只能拖入一个文件')
+    return
+  }
+  var entry = e.dataTransfer?.items?.[0]?.webkitGetAsEntry?.()
+  if (entry?.isDirectory) {
+    ElMessage.warning('不支持上传文件夹')
+    return
+  }
+  var file = files[0]
+  var hasExisting = type === 'file' ? !!row.filePath : !!row.patchFilePath
+  if (hasExisting) {
+    try {
+      await ElMessageBox.confirm(
+        `确定用「${file.name}」替换 v${row.version} 的${ROW_UPLOAD_LABEL[type]}？`,
+        '替换确认',
+        { type: 'warning', confirmButtonText: '替换', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  startRowUpload(row.id, type, file)
 }
 
 /** 推荐轮播图数据 */
@@ -943,16 +1133,26 @@ onMounted(() => {
           <el-input v-model="form.version" placeholder="版本号（如 1.0）" />
         </el-form-item>
         <el-form-item label="Mod 文件" v-if="props.isStarborn">
-          <el-upload :auto-upload="false" :limit="1" :on-change="handleModFileChange" :show-file-list="true">
-            <el-button>选择文件</el-button>
+          <el-upload
+            ref="modUploadRef"
+            class="mod-file-upload"
+            drag
+            :auto-upload="false"
+            :limit="1"
+            :on-change="handleModFileChange"
+            :on-remove="handleModFileRemove"
+            :on-exceed="handleModFileExceed"
+          >
+            <el-icon class="mod-file-upload-icon"><UploadFilled /></el-icon>
+            <div class="el-upload__text">将文件拖到此处，或 <em>点击选择</em></div>
           </el-upload>
         </el-form-item>
         <el-form-item label="图片">
           <div @paste="handlePasteImage" tabindex="0" class="image-upload-paste-zone">
-            <el-upload ref="imageUploadRef" :auto-upload="false" list-type="picture-card" :on-change="handleImageChange" :on-remove="handleImageRemove" accept="image/*" multiple>
+            <el-upload ref="imageUploadRef" drag :auto-upload="false" list-type="picture-card" :on-change="handleImageChange" :on-remove="handleImageRemove" accept="image/*" multiple>
               <el-icon><Plus /></el-icon>
             </el-upload>
-            <div class="paste-hint">支持 Ctrl+V 粘贴图片</div>
+            <div class="paste-hint">支持拖入图片或 Ctrl+V 粘贴</div>
           </div>
         </el-form-item>
         <el-form-item label="分享链接">
@@ -1036,9 +1236,10 @@ onMounted(() => {
         <div class="detail-section">
           <div class="detail-header">
             <h4>图片</h4>
-            <el-upload v-if="props.isStarborn" :auto-upload="false" :show-file-list="false" accept="image/*" multiple :on-change="handleDetailImageAdd">
-              <el-button text type="primary" :icon="Plus" :loading="uploadingDetailImage">添加图片</el-button>
-            </el-upload>
+            <template v-if="props.isStarborn">
+              <el-button text type="primary" :icon="Plus" :loading="uploadingDetailImage" @click="triggerDetailImageSelect">添加图片</el-button>
+              <input ref="detailImageInput" type="file" accept="image/*" multiple style="display: none;" @change="handleDetailImageAdd" />
+            </template>
           </div>
           <div v-if="selectedCreation.images && selectedCreation.images.length > 0" class="detail-images-scroll">
             <draggable v-if="props.isStarborn" v-model="selectedCreation.images" item-key="id" class="detail-images-drag" :animation="200" @end="handleImageSortEnd">
@@ -1152,17 +1353,25 @@ onMounted(() => {
             <el-table-column prop="version" label="版本" width="80" />
             <el-table-column label="Mod 文件" min-width="240">
               <template #default="{ row }">
-                <div v-if="uploadingVersionId === row.id && uploadType === 'file'" style="padding: 4px 0;">
-                  <el-progress :percentage="uploadProgress" :stroke-width="6" />
-                </div>
-                <div v-else style="display: flex; align-items: center; gap: 4px;">
-                  <el-tooltip v-if="row.fileName" :content="row.fileName" placement="top" :show-after="300">
-                    <span class="patch-filename">{{ row.fileName }}</span>
-                  </el-tooltip>
-                  <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="openExternal(row.filePath)">下载</el-button>
-                  <el-upload v-if="props.isStarborn" :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadFile(row.id, f)">
-                    <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null">{{ row.filePath ? '替换' : '上传' }}</el-button>
-                  </el-upload>
+                <!-- 整个单元格可拖入文件（仅星裔），非星裔不打标记，会被全局防拖偏拦下 -->
+                <div
+                  class="row-drop-zone"
+                  :class="{ 'is-dragover': dragoverCell === `${row.id}-file` }"
+                  :data-file-drop-zone="props.isStarborn ? '' : undefined"
+                  @dragover="handleRowDragOver($event, row, 'file')"
+                  @dragleave="handleRowDragLeave"
+                  @drop="handleRowDrop($event, row, 'file')"
+                >
+                  <div v-if="uploadingVersionId === row.id && uploadType === 'file'" class="row-upload-progress">
+                    <el-progress :percentage="uploadProgress" :stroke-width="6" />
+                  </div>
+                  <template v-else>
+                    <el-tooltip v-if="row.fileName" :content="row.fileName" placement="top" :show-after="300">
+                      <span class="patch-filename">{{ row.fileName }}</span>
+                    </el-tooltip>
+                    <el-button v-if="row.filePath" text type="primary" size="small" :icon="Download" @click.stop="openExternal(row.filePath)">下载</el-button>
+                    <el-button v-if="props.isStarborn" text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null" @click.stop="triggerRowFileSelect(row, 'file')">{{ row.filePath ? '替换' : '上传' }}</el-button>
+                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -1179,17 +1388,24 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="汉化补丁" min-width="240">
               <template #default="{ row }">
-                <div v-if="uploadingVersionId === row.id && uploadType === 'patch'" style="padding: 4px 0;">
-                  <el-progress :percentage="uploadProgress" :stroke-width="6" />
-                </div>
-                <div v-else style="display: flex; align-items: center; gap: 4px;">
-                  <el-tooltip v-if="row.patchFileName" :content="row.patchFileName" placement="top" :show-after="300">
-                    <span class="patch-filename">{{ row.patchFileName }}</span>
-                  </el-tooltip>
-                  <el-button v-if="row.patchFilePath" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadPatch(row.patchFilePath)">下载</el-button>
-                  <el-upload :auto-upload="false" :show-file-list="false" :limit="1" :on-change="(f: any) => handleUploadPatch(row.id, f)">
-                    <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null">{{ row.patchFilePath ? '替换' : '上传' }}</el-button>
-                  </el-upload>
+                <div
+                  class="row-drop-zone"
+                  :class="{ 'is-dragover': dragoverCell === `${row.id}-patch` }"
+                  data-file-drop-zone
+                  @dragover="handleRowDragOver($event, row, 'patch')"
+                  @dragleave="handleRowDragLeave"
+                  @drop="handleRowDrop($event, row, 'patch')"
+                >
+                  <div v-if="uploadingVersionId === row.id && uploadType === 'patch'" class="row-upload-progress">
+                    <el-progress :percentage="uploadProgress" :stroke-width="6" />
+                  </div>
+                  <template v-else>
+                    <el-tooltip v-if="row.patchFileName" :content="row.patchFileName" placement="top" :show-after="300">
+                      <span class="patch-filename">{{ row.patchFileName }}</span>
+                    </el-tooltip>
+                    <el-button v-if="row.patchFilePath" text type="primary" size="small" :icon="Download" @click.stop="handleDownloadPatch(row.patchFilePath)">下载</el-button>
+                    <el-button text type="success" size="small" :icon="Upload" :disabled="uploadingVersionId !== null" @click.stop="triggerRowFileSelect(row, 'patch')">{{ row.patchFilePath ? '替换' : '上传' }}</el-button>
+                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -1202,6 +1418,8 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <!-- 版本行内 Mod 文件 / 汉化补丁上传共用的文件选择框 -->
+          <input ref="rowFileInput" type="file" style="display: none;" @change="handleRowFileInputChange" />
         </div>
 
         <div v-if="creationTasks.length > 0" class="detail-section">
@@ -1255,9 +1473,19 @@ onMounted(() => {
         <el-form-item label="版本号" required>
           <el-input v-model="versionForm.version" placeholder="版本号（如 1.1）" />
         </el-form-item>
-        <el-form-item label="Mod 文件">
-          <el-upload :auto-upload="false" :limit="1" :on-change="handleVersionModFileChange" :show-file-list="true">
-            <el-button>选择文件</el-button>
+        <el-form-item label="Mod 文件" v-if="props.isStarborn">
+          <el-upload
+            ref="versionModUploadRef"
+            class="mod-file-upload"
+            drag
+            :auto-upload="false"
+            :limit="1"
+            :on-change="handleVersionModFileChange"
+            :on-remove="handleVersionModFileRemove"
+            :on-exceed="handleVersionModFileExceed"
+          >
+            <el-icon class="mod-file-upload-icon"><UploadFilled /></el-icon>
+            <div class="el-upload__text">将文件拖到此处，或 <em>点击选择</em></div>
           </el-upload>
         </el-form-item>
         <el-form-item label="分享链接">
@@ -1328,6 +1556,19 @@ onMounted(() => {
 .image-upload-paste-zone { outline: none; border: 1px dashed transparent; border-radius: 6px; padding: 4px; transition: border-color 0.2s; }
 .image-upload-paste-zone:focus { border-color: var(--el-color-primary); }
 .paste-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 4px; }
+/* 对话框里的 Mod 文件拖拽框：撑满表单项宽度，内边距比默认的 40px 收紧 */
+.mod-file-upload { width: 100%; }
+.mod-file-upload :deep(.el-upload-dragger) { padding: 16px 10px; }
+.mod-file-upload-icon { font-size: 32px; color: var(--el-text-color-placeholder); margin-bottom: 4px; }
+/* 图片卡片开启拖拽后内部多了一层 dragger，去掉它自带的边框和内边距，让卡片本身充当拖拽框 */
+.image-upload-paste-zone :deep(.el-upload--picture-card .el-upload-dragger) { width: 100%; height: 100%; padding: 0; border: none; border-radius: 6px; background: transparent; display: flex; align-items: center; justify-content: center; }
+.image-upload-paste-zone :deep(.el-upload--picture-card .el-upload-dragger.is-dragover) { background-color: var(--el-color-primary-light-9); }
+/* 版本表格单元格拖拽区：平时边框透明不占视觉，文件悬停时高亮 */
+.row-drop-zone { display: flex; align-items: center; gap: 4px; min-height: 28px; margin: -2px -4px; padding: 2px 4px; border: 1px dashed transparent; border-radius: 4px; transition: border-color 0.2s, background-color 0.2s; }
+.row-drop-zone.is-dragover { border-color: var(--el-color-primary); background-color: var(--el-color-primary-light-9); }
+/* 按钮不再包在 el-upload 里，相邻 el-button 会带默认 12px 左边距，间距统一交给 gap */
+.row-drop-zone .el-button + .el-button { margin-left: 0; }
+.row-upload-progress { flex: 1; padding: 4px 0; }
 .preset-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .preset-tag { cursor: pointer; }
 /* 推荐轮播图 */

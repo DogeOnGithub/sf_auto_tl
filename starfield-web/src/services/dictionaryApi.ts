@@ -1,11 +1,11 @@
 import api from './api'
-import type { DictionaryEntry, DictionaryEntriesResponse } from '@/types'
+import type { DictionaryEntry, DictionaryPageResponse } from '@/types'
 
-/** 查询词典词条（支持关键词搜索） */
-export function getEntries(keyword?: string): Promise<DictionaryEntriesResponse> {
+/** 分页查询词典词条（支持关键词搜索，按更新时间倒序） */
+export function getEntries(page: number, size: number, keyword?: string): Promise<DictionaryPageResponse> {
   return api
-    .get<DictionaryEntriesResponse>('/api/dictionary/entries', {
-      params: keyword ? { keyword } : undefined,
+    .get<DictionaryPageResponse>('/api/dictionary/entries', {
+      params: { page, size, ...(keyword ? { keyword } : {}) },
     })
     .then((res) => res.data)
 }

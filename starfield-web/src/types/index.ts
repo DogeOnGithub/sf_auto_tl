@@ -57,8 +57,12 @@ export interface DictionaryEntry {
   targetText: string
 }
 
-export interface DictionaryEntriesResponse {
-  entries: DictionaryEntry[]
+/** 词典分页响应（按更新时间倒序） */
+export interface DictionaryPageResponse {
+  records: DictionaryEntry[]
+  total: number
+  current: number
+  pages: number
 }
 
 export interface ErrorResponse {

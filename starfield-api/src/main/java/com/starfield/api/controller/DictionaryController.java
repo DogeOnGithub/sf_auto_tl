@@ -1,8 +1,8 @@
 package com.starfield.api.controller;
 
-import com.starfield.api.dto.DictionaryEntriesResponse;
 import com.starfield.api.dto.DictionaryEntryRequest;
 import com.starfield.api.dto.DictionaryEntryResponse;
+import com.starfield.api.dto.DictionaryPageResponse;
 import com.starfield.api.service.DictionaryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,16 +21,20 @@ public class DictionaryController {
     final DictionaryService dictionaryService;
 
     /**
-     * 查询词条列表，支持关键词搜索
+     * 分页查询词条，支持关键词搜索，按更新时间倒序
      *
      * @param keyword 搜索关键词（可选）
-     * @return 词条列表响应
+     * @param page    页码，从 1 开始
+     * @param size    每页条数
+     * @return 分页响应
      */
     @GetMapping
-    public ResponseEntity<DictionaryEntriesResponse> getEntries(
-            @RequestParam(required = false) String keyword) {
-        log.info("[getEntries] 收到查询词条请求 keyword {}", keyword);
-        var response = dictionaryService.getEntries(keyword);
+    public ResponseEntity<DictionaryPageResponse> getEntries(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        log.info("[getEntries] 收到查询词条请求 keyword {} page {} size {}", keyword, page, size);
+        var response = dictionaryService.getEntries(keyword, page, size);
         return ResponseEntity.ok(response);
     }
 

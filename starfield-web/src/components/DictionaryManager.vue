@@ -5,6 +5,9 @@ import { getEntries, createEntry, updateEntry, deleteEntry } from '@/services/di
 import type { DictionaryEntry } from '@/types'
 
 const entries = ref<DictionaryEntry[]>([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 const keyword = ref('')
 const loading = ref(false)
 const dialogVisible = ref(false)
@@ -16,12 +19,20 @@ const form = ref({ sourceText: '', targetText: '' })
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 获取词条列表 */
+/**
+ * 获取当前页词条
+ * 删掉末页最后一条后当前页会变空，此时退到实际的最后一页重新查，避免停在空白页
+ */
 async function fetchEntries() {
   loading.value = true
   try {
-    var result = await getEntries(keyword.value || undefined)
-    entries.value = result.entries
+    var result = await getEntries(currentPage.value, pageSize.value, keyword.value || undefined)
+    if (result.records.length === 0 && result.total > 0 && currentPage.value > 1) {
+      currentPage.value = Math.max(1, result.pages)
+      result = await getEntries(currentPage.value, pageSize.value, keyword.value || undefined)
+    }
+    entries.value = result.records
+    total.value = result.total
   } catch (err: any) {
     var msg = err?.response?.data?.message || '获取词条列表失败'
     ElMessage.error(msg)
@@ -30,12 +41,24 @@ async function fetchEntries() {
   }
 }
 
-/** 搜索防抖 */
+/** 搜索防抖，关键词变化后回到第一页 */
 function debounceSearch() {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
+    currentPage.value = 1
     fetchEntries()
   }, 300)
+}
+
+function handlePageChange(page: number) {
+  currentPage.value = page
+  fetchEntries()
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchEntries()
 }
 
 /** 打开添加对话框 */
@@ -70,6 +93,8 @@ async function submitForm() {
       ElMessage.success('词条添加成功')
     }
     dialogVisible.value = false
+    // 列表按更新时间倒序，新增或编辑过的词条会排到第一页最前，跳回第一页才能看到
+    currentPage.value = 1
     await fetchEntries()
   } catch (err: any) {
     var msg = err?.response?.data?.message || '操作失败'
@@ -123,6 +148,17 @@ onMounted(fetchEntries)
         </template>
       </el-table-column>
     </el-table>
+    <div class="pagination-wrap" v-if="total > 0">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="handlePageChange"
+        @size-change="handleSizeChange"
+      />
+    </div>
   </el-card>
 
   <el-dialog v-model="dialogVisible" :title="isEditing ? '编辑词条' : '添加词条'" width="480px">
@@ -152,4 +188,6 @@ onMounted(fetchEntries)
 .search-input {
   flex: 1;
 }
+
+.pagination-wrap { margin-top: 16px; display: flex; justify-content: center; }
 </style>

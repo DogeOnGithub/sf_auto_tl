@@ -1,9 +1,9 @@
 package com.starfield.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.starfield.api.dto.DictionaryEntriesResponse;
 import com.starfield.api.dto.DictionaryEntryRequest;
 import com.starfield.api.dto.DictionaryEntryResponse;
+import com.starfield.api.dto.DictionaryPageResponse;
 import com.starfield.api.service.DictionaryService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,35 +35,42 @@ class DictionaryControllerTest {
     DictionaryService dictionaryService;
 
     /**
-     * 查询全部词条应返回 200 和词条列表
+     * 不传分页参数时默认第 1 页 每页 20 条
      */
     @Test
     void getEntries_noKeyword_returns200() throws Exception {
         var entries = List.of(new DictionaryEntryResponse(1L, "Dragon", "龙"));
-        when(dictionaryService.getEntries(null))
-                .thenReturn(new DictionaryEntriesResponse(entries));
+        when(dictionaryService.getEntries(null, 1, 20))
+                .thenReturn(new DictionaryPageResponse(entries, 1, 1, 1));
 
         mockMvc.perform(get("/api/dictionary/entries"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.entries").isArray())
-                .andExpect(jsonPath("$.entries[0].id").value(1))
-                .andExpect(jsonPath("$.entries[0].sourceText").value("Dragon"))
-                .andExpect(jsonPath("$.entries[0].targetText").value("龙"));
+                .andExpect(jsonPath("$.records").isArray())
+                .andExpect(jsonPath("$.records[0].id").value(1))
+                .andExpect(jsonPath("$.records[0].sourceText").value("Dragon"))
+                .andExpect(jsonPath("$.records[0].targetText").value("龙"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.current").value(1))
+                .andExpect(jsonPath("$.pages").value(1));
     }
 
     /**
-     * 带关键词查询应返回 200 和过滤后的词条
+     * 带关键词和分页参数查询应原样透传给服务层
      */
     @Test
     void getEntries_withKeyword_returns200() throws Exception {
         var entries = List.of(new DictionaryEntryResponse(1L, "Dragon", "龙"));
-        when(dictionaryService.getEntries("Dragon"))
-                .thenReturn(new DictionaryEntriesResponse(entries));
+        when(dictionaryService.getEntries("Dragon", 2, 50))
+                .thenReturn(new DictionaryPageResponse(entries, 51, 2, 2));
 
-        mockMvc.perform(get("/api/dictionary/entries").param("keyword", "Dragon"))
+        mockMvc.perform(get("/api/dictionary/entries")
+                        .param("keyword", "Dragon")
+                        .param("page", "2")
+                        .param("size", "50"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.entries").hasJsonPath())
-                .andExpect(jsonPath("$.entries[0].sourceText").value("Dragon"));
+                .andExpect(jsonPath("$.records[0].sourceText").value("Dragon"))
+                .andExpect(jsonPath("$.total").value(51))
+                .andExpect(jsonPath("$.current").value(2));
     }
 
     /**

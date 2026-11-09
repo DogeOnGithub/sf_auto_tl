@@ -1,9 +1,10 @@
 package com.starfield.api.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.starfield.api.dto.DictionaryEntriesResponse;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.dto.DictionaryEntryRequest;
 import com.starfield.api.dto.DictionaryEntryResponse;
+import com.starfield.api.dto.DictionaryPageResponse;
 import com.starfield.api.entity.DictionaryEntry;
 import com.starfield.api.repository.DictionaryEntryRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,21 +25,36 @@ public class DictionaryService {
     final DictionaryEntryRepository dictionaryEntryRepository;
 
     /**
-     * 查询词条列表，支持关键词搜索过滤
+     * 分页查询词条，支持按原文或译文模糊搜索
+     * <p>
+     * 按更新时间倒序，新增或刚编辑的词条排在第一页。更新时间相同时再按 ID 倒序兜底，
+     * 否则数据库不保证返回顺序，翻页时同一词条可能在两页重复出现或被漏掉
+     * <p>
+     * 翻译流程不走这里，FileUploadService 直接查全量词条传给引擎
      *
-     * @param keyword 搜索关键词，为空时返回全部
-     * @return 词条列表响应
+     * @param keyword 搜索关键词，为空时查询全部
+     * @param page    页码，从 1 开始
+     * @param size    每页条数
+     * @return 分页响应
      */
-    public DictionaryEntriesResponse getEntries(String keyword) {
-        log.info("[getEntries] 查询词条列表 keyword {}", keyword);
-        var entries = (Objects.nonNull(keyword) && !keyword.isBlank())
-                ? searchByKeyword(keyword)
-                : dictionaryEntryRepository.selectList(null);
-        var responseList = entries.stream()
+    public DictionaryPageResponse getEntries(String keyword, int page, int size) {
+        log.info("[getEntries] 分页查询词条 keyword {} page {} size {}", keyword, page, size);
+        var wrapper = new LambdaQueryWrapper<DictionaryEntry>();
+        if (Objects.nonNull(keyword) && !keyword.isBlank()) {
+            // 用 and 包一层括号 避免 OR 条件和后续追加的条件混在一起
+            wrapper.and(w -> w.like(DictionaryEntry::getSourceText, keyword)
+                    .or()
+                    .like(DictionaryEntry::getTargetText, keyword));
+        }
+        wrapper.orderByDesc(DictionaryEntry::getUpdatedAt)
+                .orderByDesc(DictionaryEntry::getId);
+
+        var pageResult = dictionaryEntryRepository.selectPage(new Page<>(page, size), wrapper);
+        var records = pageResult.getRecords().stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
-        log.info("[getEntries] 返回词条数量 {}", responseList.size());
-        return new DictionaryEntriesResponse(responseList);
+        log.info("[getEntries] 返回词条 count {} total {}", records.size(), pageResult.getTotal());
+        return new DictionaryPageResponse(records, pageResult.getTotal(), pageResult.getCurrent(), pageResult.getPages());
     }
 
     /**
@@ -110,17 +126,6 @@ public class DictionaryService {
         var wrapper = new LambdaQueryWrapper<DictionaryEntry>()
                 .eq(DictionaryEntry::getSourceText, sourceText);
         return dictionaryEntryRepository.selectOne(wrapper);
-    }
-
-    /**
-     * 根据关键词搜索词条（匹配原文或译文）
-     */
-    private java.util.List<DictionaryEntry> searchByKeyword(String keyword) {
-        var wrapper = new LambdaQueryWrapper<DictionaryEntry>()
-                .like(DictionaryEntry::getSourceText, keyword)
-                .or()
-                .like(DictionaryEntry::getTargetText, keyword);
-        return dictionaryEntryRepository.selectList(wrapper);
     }
 
     /**

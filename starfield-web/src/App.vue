@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled, Moon, Sunny, Cpu } from '@element-plus/icons-vue'
+import { Reading, Setting, Collection, Clock, Folder, Memo, HomeFilled, Moon, Sunny, Cpu, Fold, Expand, DArrowLeft } from '@element-plus/icons-vue'
 import FileUpload from '@/components/FileUpload.vue'
 import TaskList from '@/components/TaskList.vue'
 import TaskHistory from '@/components/TaskHistory.vue'
@@ -12,6 +12,8 @@ import CacheManager from '@/components/CacheManager.vue'
 import LlmPoolManager from '@/components/LlmPoolManager.vue'
 import { useStarborn } from '@/composables/useStarborn'
 import { useTheme } from '@/composables/useTheme'
+import { useSidebar } from '@/composables/useSidebar'
+import { useFileDropGuard } from '@/composables/useFileDropGuard'
 import type { FileUploadResponse } from '@/types'
 
 const { isStarborn, activateStarborn, deactivateStarborn } = useStarborn()
@@ -38,6 +40,22 @@ const { isDark, toggleTheme } = useTheme()
 
 /** 主题按钮只有图标 文案改由 title/aria-label 承载 保证可访问性 */
 const themeToggleLabel = computed(() => (isDark.value ? '切换到亮色模式' : '切换到暗黑模式'))
+
+const { sidebarMode, cycleSidebar } = useSidebar()
+
+/** 各形态的侧栏宽度，仅图标宽度与 el-menu 折叠宽度（图标 24 + 两侧内边距 20×2）一致 */
+const ASIDE_WIDTH = { expanded: '200px', icon: '64px', hidden: '0px' } as const
+const asideWidth = computed(() => ASIDE_WIDTH[sidebarMode.value])
+
+/** 折叠按钮的图标和提示描述的是「点击后会变成什么」 */
+const sidebarToggle = computed(() => {
+  if (sidebarMode.value === 'expanded') return { icon: Fold, label: '收起为图标' }
+  if (sidebarMode.value === 'icon') return { icon: DArrowLeft, label: '完全收起导航栏' }
+  return { icon: Expand, label: '展开导航栏' }
+})
+
+// 全站防拖偏：文件只能拖进上传区域
+useFileDropGuard()
 
 /** 菜单切换时同步 hash */
 function handleMenuSelect(index: string) {
@@ -88,7 +106,13 @@ function handleUploadSuccess(payload: FileUploadResponse) {
 
 <template>
   <el-container class="app-layout">
-    <el-aside width="200px" class="app-aside">
+    <!-- 完全折叠时侧栏宽度为 0 但仍在 DOM 里，用 inert 让里面的菜单不能被 Tab 聚焦 -->
+    <el-aside
+      :width="asideWidth"
+      class="app-aside"
+      :class="'is-' + sidebarMode"
+      :inert="sidebarMode === 'hidden'"
+    >
       <div class="logo">
         <img
           src="/logo.png"
@@ -99,47 +123,64 @@ function handleUploadSuccess(payload: FileUploadResponse) {
         />
         <p class="logo-sub">Mod 翻译工具</p>
       </div>
+      <!-- 菜单名必须放在 title 插槽里，折叠成图标时 Element Plus 才会在悬停时显示菜单名 -->
       <el-menu
         :default-active="activeMenu"
+        :collapse="sidebarMode === 'icon'"
+        :collapse-transition="false"
         @select="handleMenuSelect"
         class="side-menu"
       >
         <el-menu-item index="home">
           <el-icon><HomeFilled /></el-icon>
-          <span>首页</span>
+          <template #title>首页</template>
         </el-menu-item>
         <el-menu-item index="translate">
           <el-icon><Reading /></el-icon>
-          <span>翻译</span>
+          <template #title>翻译</template>
         </el-menu-item>
         <el-menu-item index="history">
           <el-icon><Clock /></el-icon>
-          <span>翻译历史</span>
+          <template #title>翻译历史</template>
         </el-menu-item>
         <el-menu-item index="cache">
           <el-icon><Memo /></el-icon>
-          <span>翻译缓存</span>
+          <template #title>翻译缓存</template>
         </el-menu-item>
         <el-menu-item index="prompt">
           <el-icon><Setting /></el-icon>
-          <span>Prompt 管理</span>
+          <template #title>Prompt 管理</template>
         </el-menu-item>
         <el-menu-item index="dictionary">
           <el-icon><Collection /></el-icon>
-          <span>词典</span>
+          <template #title>词典</template>
         </el-menu-item>
         <el-menu-item index="creations">
           <el-icon><Folder /></el-icon>
-          <span>Creations</span>
+          <template #title>Creations</template>
         </el-menu-item>
         <el-menu-item v-if="isStarborn" index="llm-pool">
           <el-icon><Cpu /></el-icon>
-          <span>模型池</span>
+          <template #title>模型池</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
     <el-container class="app-body">
+      <!-- 侧栏折叠：定位在内容区左上角（侧栏完全折叠后只能放这里），单按钮三态循环 -->
+      <el-button
+        text
+        circle
+        class="sidebar-toggle-btn"
+        :title="sidebarToggle.label"
+        :aria-label="sidebarToggle.label"
+        @click="cycleSidebar"
+      >
+        <el-icon :size="18">
+          <component :is="sidebarToggle.icon" />
+        </el-icon>
+      </el-button>
+
       <!-- 主题切换：定位在内容区右上角 各页面通用 -->
       <el-button
         text
@@ -215,14 +256,23 @@ function handleUploadSuccess(payload: FileUploadResponse) {
   background: var(--el-bg-color);
   border-right: 1px solid var(--el-border-color-lighter);
   overflow-y: auto;
+  /* 宽度过渡期间菜单文字不换行，横向裁掉即可 */
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
+  transition: width 0.25s ease;
+}
+
+/* 完全折叠时去掉右边框，否则会残留一条 1px 竖线 */
+.app-aside.is-hidden {
+  border-right: none;
 }
 
 .logo {
   padding: 20px 16px 12px;
   text-align: center;
   border-bottom: 1px solid var(--el-border-color-lighter);
+  transition: padding 0.25s ease;
 }
 
 .logo-img {
@@ -230,29 +280,52 @@ function handleUploadSuccess(payload: FileUploadResponse) {
   height: auto;
   display: block;
   margin: 0 auto;
+  transition: width 0.25s ease;
 }
 
 .logo-sub {
   margin: 2px 0 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+/* 仅图标：logo 缩成小圆标，仍可点击触发彩蛋 */
+.app-aside.is-icon .logo {
+  padding: 16px 8px 12px;
+}
+
+.app-aside.is-icon .logo-img {
+  width: 36px;
+}
+
+.app-aside.is-icon .logo-sub {
+  display: none;
 }
 
 .side-menu {
   border-right: none;
 }
 
-/* 内容区作为主题按钮的定位参照 */
+/* 内容区作为主题按钮、折叠按钮的定位参照 */
 .app-body {
   position: relative;
 }
 
-.theme-toggle-btn {
+.theme-toggle-btn,
+.sidebar-toggle-btn {
   position: absolute;
   top: 16px;
-  right: 24px;
   z-index: 10;
   color: var(--el-text-color-regular);
+}
+
+.theme-toggle-btn {
+  right: 24px;
+}
+
+.sidebar-toggle-btn {
+  left: 16px;
 }
 
 .app-main {

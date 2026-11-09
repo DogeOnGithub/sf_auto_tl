@@ -1,6 +1,7 @@
 package com.starfield.api.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.starfield.api.dto.DictionaryEntryRequest;
 import com.starfield.api.entity.DictionaryEntry;
 import com.starfield.api.repository.DictionaryEntryRepository;
@@ -27,41 +28,55 @@ class DictionaryServiceTest {
     @InjectMocks
     DictionaryService dictionaryService;
 
-    /** 无关键词时应返回全部词条 */
+    /** 无关键词时应按页码分页查询 且不带搜索条件 */
     @Test
-    void getEntries_noKeyword_returnsAll() {
+    @SuppressWarnings("unchecked")
+    void getEntries_noKeyword_returnsPage() {
         var entry = createEntry(1L, "Dragon", "龙");
-        when(dictionaryEntryRepository.selectList(isNull())).thenReturn(List.of(entry));
+        stubSelectPage(List.of(entry), 21);
 
-        var response = dictionaryService.getEntries(null);
+        var response = dictionaryService.getEntries(null, 2, 20);
 
-        assertThat(response.entries()).hasSize(1);
-        assertThat(response.entries().get(0).sourceText()).isEqualTo("Dragon");
-        verify(dictionaryEntryRepository).selectList(isNull());
+        assertThat(response.records()).hasSize(1);
+        assertThat(response.records().get(0).sourceText()).isEqualTo("Dragon");
+        assertThat(response.total()).isEqualTo(21);
+        assertThat(response.current()).isEqualTo(2);
+        var pageCaptor = ArgumentCaptor.forClass(Page.class);
+        var wrapperCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(dictionaryEntryRepository).selectPage(pageCaptor.capture(), wrapperCaptor.capture());
+        assertThat(pageCaptor.getValue().getCurrent()).isEqualTo(2);
+        assertThat(pageCaptor.getValue().getSize()).isEqualTo(20);
+        assertThat(wrapperCaptor.getValue().isEmptyOfWhere()).isTrue();
     }
 
-    /** 空白关键词应返回全部词条 */
+    /** 空白关键词视为无关键词 不带搜索条件 */
     @Test
+    @SuppressWarnings("unchecked")
     void getEntries_blankKeyword_returnsAll() {
-        when(dictionaryEntryRepository.selectList(isNull())).thenReturn(List.of());
+        stubSelectPage(List.of(), 0);
 
-        var response = dictionaryService.getEntries("   ");
+        var response = dictionaryService.getEntries("   ", 1, 20);
 
-        assertThat(response.entries()).isEmpty();
-        verify(dictionaryEntryRepository).selectList(isNull());
+        assertThat(response.records()).isEmpty();
+        var wrapperCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(dictionaryEntryRepository).selectPage(any(Page.class), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().isEmptyOfWhere()).isTrue();
     }
 
-    /** 有关键词时应调用搜索方法 */
+    /** 有关键词时应带上搜索条件 */
     @Test
+    @SuppressWarnings("unchecked")
     void getEntries_withKeyword_searchesByKeyword() {
         var entry = createEntry(1L, "Dragon", "龙");
-        when(dictionaryEntryRepository.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(entry));
+        stubSelectPage(List.of(entry), 1);
 
-        var response = dictionaryService.getEntries("Dragon");
+        var response = dictionaryService.getEntries("Dragon", 1, 20);
 
-        assertThat(response.entries()).hasSize(1);
-        assertThat(response.entries().get(0).sourceText()).isEqualTo("Dragon");
-        verify(dictionaryEntryRepository).selectList(any(LambdaQueryWrapper.class));
+        assertThat(response.records()).hasSize(1);
+        assertThat(response.records().get(0).sourceText()).isEqualTo("Dragon");
+        var wrapperCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(dictionaryEntryRepository).selectPage(any(Page.class), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().isEmptyOfWhere()).isFalse();
     }
 
     /** 创建新词条应保存并返回响应 */
@@ -171,6 +186,18 @@ class DictionaryServiceTest {
 
         assertThatThrownBy(() -> dictionaryService.deleteEntry(99L))
                 .isInstanceOf(DictionaryService.EntryNotFoundException.class);
+    }
+
+    /** 模拟分页查询 把传入的 Page 填上记录和总数后原样返回 与 MyBatis-Plus 分页插件行为一致 */
+    @SuppressWarnings("unchecked")
+    private void stubSelectPage(List<DictionaryEntry> records, long total) {
+        when(dictionaryEntryRepository.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                .thenAnswer(invocation -> {
+                    Page<DictionaryEntry> page = invocation.getArgument(0);
+                    page.setRecords(records);
+                    page.setTotal(total);
+                    return page;
+                });
     }
 
     private DictionaryEntry createEntry(Long id, String sourceText, String targetText) {
